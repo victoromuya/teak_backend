@@ -1,0 +1,6 @@
+djangorestframework
+djangorestframework-simplejwt
+pillow
+qrcode
+django-filter
+   # or paystack integration
