@@ -3,4 +3,5 @@ djangorestframework-simplejwt
 pillow
 qrcode
 django-filter
+python-dotenv
    # or paystack integration
