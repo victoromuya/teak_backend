@@ -4,4 +4,5 @@ pillow
 qrcode
 django-filter
 python-dotenv
+gunicorn
    # or paystack integration
