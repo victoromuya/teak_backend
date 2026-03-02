@@ -5,4 +5,5 @@ qrcode
 django-filter
 python-dotenv
 gunicorn
+requests
    # or paystack integration

@@ -45,6 +45,9 @@ INSTALLED_APPS = [
     'rest_framework.authtoken',
     'django_filters',
     'accounts',
+    'events',
+    'orders',
+    'tickets',
 ]
 
 
@@ -132,6 +135,9 @@ USE_I18N = True
 USE_L10N = True
 
 USE_TZ = True
+
+PAYSTACK_SECRET_KEY=os.getenv("PAYSTACK_SECRET_KEY")
+PAYSTACK_CALLBACK_URL="http://localhost:3000/payment-success"
 
 
 # Static files (CSS, JavaScript, Images)

@@ -12,5 +12,12 @@ class RegisterSerializer(serializers.ModelSerializer):
         fields = ['username', 'email', 'password', 'is_organizer']
 
     def create(self, validated_data):
+        role = validated_data.pop("role", "user")
+
         user = User.objects.create_user(**validated_data)
+
+        if role == "organizer":
+            user.is_organizer = True
+            user.save()
+
         return user
