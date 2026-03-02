@@ -83,7 +83,7 @@ def verify_payment(self, request, reference=None):
         order.save()
         return Response({"error": "Payment not successful"}, status=400)
 
-    # ✅ Atomic stock update
+    # Atomic stock update
     with transaction.atomic():
         for item in order.items.select_related("ticket_type"):
             ticket = item.ticket_type
