@@ -9,6 +9,7 @@ class Order(models.Model):
         ("pending", "Pending"),
         ("paid", "Paid"),
         ("failed", "Failed"),
+        ("expired", "Expired"),
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -18,6 +19,13 @@ class Order(models.Model):
     total_amount = models.DecimalField(max_digits=12, decimal_places=2)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
     created_at = models.DateTimeField(auto_now_add=True)
+    verified_at = models.DateTimeField(null=True, blank=True)
+
+    def is_expired(self):
+        return (
+            self.status == "pending" and
+            timezone.now() > self.created_at + timedelta(minutes=10)
+        )
 
 
 class OrderItem(models.Model):

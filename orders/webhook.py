@@ -11,6 +11,28 @@ from events.models import TicketType
 
 @csrf_exempt
 def paystack_webhook(request):
+    payload = request.body
+
+    # ⚠️ TEMPORARY: Skip signature validation for local testing
+    if settings.DEBUG:
+        event = json.loads(payload)
+    else:
+        signature = request.headers.get("x-paystack-signature")
+
+        computed = hmac.new(
+            settings.PAYSTACK_SECRET_KEY.encode(),
+            payload,
+            hashlib.sha512
+        ).hexdigest()
+
+        if computed != signature:
+            return HttpResponse(status=400)
+
+        event = json.loads(payload)
+
+
+# @csrf_exempt
+# def paystack_webhook(request):
     signature = request.headers.get("x-paystack-signature")
     body = request.body
 

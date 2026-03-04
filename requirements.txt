@@ -7,4 +7,7 @@ python-dotenv
 gunicorn
 requests
 whitenoise
+django-cors-headers
+qrcode
+pillow
    # or paystack integration
