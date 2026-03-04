@@ -137,7 +137,7 @@ USE_L10N = True
 USE_TZ = True
 
 PAYSTACK_SECRET_KEY=os.getenv("PAYSTACK_SECRET_KEY")
-PAYSTACK_CALLBACK_URL="http://localhost:3000/payment-success"
+PAYSTACK_CALLBACK_URL="https://teak-backend.onrender.com/payment-success"
 
 
 # Static files (CSS, JavaScript, Images)
