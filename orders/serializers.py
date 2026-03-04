@@ -1,8 +1,16 @@
 from rest_framework import serializers
 from django.db import transaction
 from events.models import TicketType
+from events.serializers import EventSerializer
 from .models import Order, OrderItem
 import uuid
+
+
+
+class OrderSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Order
+        fields = "__all__"
 
 
 class OrderItemInputSerializer(serializers.Serializer):

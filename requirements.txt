@@ -6,4 +6,5 @@ django-filter
 python-dotenv
 gunicorn
 requests
+whitenoise
    # or paystack integration

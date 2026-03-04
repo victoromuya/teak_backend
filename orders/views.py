@@ -4,7 +4,7 @@ from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from .models import Order
-from .serializers import OrderCreateSerializer
+from .serializers import OrderCreateSerializer, OrderSerializer
 
 from django.db import transaction
 from rest_framework.decorators import action
@@ -17,7 +17,12 @@ class OrderViewSet(ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_serializer_class(self):
-        return OrderCreateSerializer
+        if self.action == "create":
+            return OrderCreateSerializer
+        return OrderSerializer
+
+    # def get_serializer_class(self):
+    #     return OrderCreateSerializer
 
     def get_queryset(self):
         user = self.request.user
