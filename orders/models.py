@@ -34,9 +34,19 @@ class OrderItem(models.Model):
     quantity = models.PositiveIntegerField()
     price = models.DecimalField(max_digits=10, decimal_places=2, default=100.0)
 
-    
+
+
 class Ticket(models.Model):
+
     order = models.ForeignKey(Order, on_delete=models.CASCADE)
-    ticket_code = models.UUIDField(default=uuid.uuid4, unique=True)
-    qr_image = models.ImageField(upload_to="tickets/")
+
+    ticket_type = models.ForeignKey(
+        TicketType,
+        on_delete=models.CASCADE,
+        default=1
+    )
+
+    ticket_code = models.UUIDField(default=uuid.uuid4,editable=False,unique=True,db_index=True)
+    qr_image = models.ImageField(upload_to="ticketQR/")
+    is_used = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)

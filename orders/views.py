@@ -3,11 +3,12 @@ from django.conf import settings
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from .models import Order
+from .models import Order, OrderItem, Ticket
 from .serializers import OrderCreateSerializer, OrderSerializer
 
 from django.db import transaction
 from rest_framework.decorators import action, api_view
+from rest_framework.decorators import api_view, permission_classes
 
 from rest_framework import status
 from django.utils import timezone
@@ -16,6 +17,7 @@ from datetime import timedelta
 import os
 from django.core.files import File
 from io import BytesIO
+import qrcode
 
 from django.core.mail import EmailMessage
 from django.template.loader import render_to_string
@@ -128,76 +130,162 @@ class OrderViewSet(ModelViewSet):
             "status": order.status,
         })
 
-    
+
 @api_view(["GET"])
+@permission_classes([IsAuthenticated])   # Paystack redirects without auth
 def verify_payment(request, reference):
+
+    # 1️⃣ Get Order
     try:
-        order = Order.objects.get(reference=reference)
+        order = Order.objects.prefetch_related(
+            "items__ticket_type").get(reference=reference)
+
     except Order.DoesNotExist:
-        return Response({"error": "Order not found"}, status=404)
+        return Response(
+            {"error": "Order not found"},
+            status=404
+        )
 
+    # 2️⃣ Prevent double verification
     if order.status == "paid":
-        return Response({"message": "Already verified"})
+        return Response({
+            "message": "Payment already verified",
+            "order_id": order.id
+        })
 
-    url = f"https://api.paystack.co/transaction/verify/{reference}"
+    # 3️⃣ Verify payment from Paystack
+    verify_url = f"https://api.paystack.co/transaction/verify/{reference}"
+
     headers = {
         "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}"
     }
 
-    response = requests.get(url, headers=headers)
-    data = response.json()
+    try:
+        paystack_response = requests.get(
+            verify_url,
+            headers=headers,
+            timeout=10
+        )
 
-    if not data.get("status") or data["data"]["status"] != "success":
-        return Response({"error": "Payment not successful"}, status=400)
+        paystack_data = paystack_response.json()
 
-    
-    # Atomic stock update
-        with transaction.atomic():
-            for item in order.items.select_related("ticket_type"):
-                ticket = item.ticket_type
+    except requests.RequestException:
+        return Response(
+            {"error": "Payment verification failed"},
+            status=500
+        )
 
-                if ticket.remaining < item.quantity:
-                    return Response(
-                        {"error": f"Not enough stock for {ticket.name}"},
-                        status=400,
-                    )
+    # 4️⃣ Validate Paystack response
+    if not paystack_data.get("status"):
+        return Response(
+            {"error": "Invalid Paystack response"},
+            status=400
+        )
 
-                ticket.remaining -= item.quantity
-                ticket.save()
+    payment_data = paystack_data["data"]
 
+    if payment_data["status"] != "success":
+        return Response(
+            {"error": "Payment not successful"},
+            status=400
+        )
+
+    # 5️⃣ Security: Validate amount
+    expected_amount = int(order.total_amount * 100)
+
+    if payment_data["amount"] != expected_amount:
+        return Response(
+            {"error": "Payment amount mismatch"},
+            status=400
+        )
+
+    # 6️⃣ Atomic transaction
     with transaction.atomic():
+
+        # Lock ticket rows to prevent overselling
+        order_items = order.items.select_related(
+            "ticket_type"
+        ).select_for_update()
+
+        for item in order_items:
+
+            ticket_type = item.ticket_type
+
+            if ticket_type.remaining < item.quantity:
+                return Response(
+                    {
+                        "error":
+                        f"Insufficient tickets for {ticket_type.name}"
+                    },
+                    status=400,
+                )
+
+            # Reduce stock
+            ticket_type.remaining -= item.quantity
+            ticket_type.save(update_fields=["remaining"])
+
+        # Update order
         order.status = "paid"
         order.verified_at = timezone.now()
-        order.save()
+        order.save(update_fields=["status", "verified_at"])
 
-        # generate_qr_for_order(order)  ← if implemented
+        # Generate tickets
+        # tickets = []
+
+        # for item in order_items:
+        #     for _ in range(item.quantity):
+
+        #         ticket = Ticket.objects.create(
+        #             order=order,
+        #             ticket_type=item.ticket_type
+        #         )
+
+        #         tickets.append(ticket)
+
+        # Generate QR codes
+   
         generate_tickets(order)
 
+        # Send confirmation email
+      
+        send_ticket_email(order)
 
-    return Response({"message": "Payment verified successfully"})
+    return Response({
+        "message": "Payment verified successfully",
+        "order_reference": order.reference,
+        # "tickets_generated": len(tickets)
+    })
 
 
 
 def generate_tickets(order):
 
-    for i in range(order.quantity):   # assuming order has quantity field
+    order_items = OrderItem.objects.filter(order=order)
 
-        ticket = Ticket.objects.create(order=order)
+    for item in order_items:
 
-        qr = qrcode.make(str(ticket.ticket_code))
+        ticket_type = item.ticket_type
+        quantity = item.quantity
 
-        buffer = BytesIO()
-        qr.save(buffer, format="PNG")
+        for i in range(quantity):
 
-        filename = f"{ticket.ticket_code}.png"
-        ticket.qr_image.save(filename, File(buffer), save=True)
+            ticket = Ticket.objects.create(
+                order=order,
+                ticket_type=ticket_type
+            )
+
+            qr = qrcode.make(str(ticket.ticket_code))
+
+            buffer = BytesIO()
+            qr.save(buffer, format="PNG")
+
+            filename = f"{ticket.ticket_code}.png"
+            ticket.qr_image.save(filename, File(buffer), save=True)
 
     send_ticket_email(order)
 
 
-
 def send_ticket_email(order):
-
     tickets = order.ticket_set.all()
 
     subject = "Your Ticket Confirmation"
@@ -216,10 +304,13 @@ def send_ticket_email(order):
         subject,
         body,
         settings.EMAIL_HOST_USER,
-        [order.email],   # assuming order has email field
+        [order.user.email],   # assuming order has email field
     )
 
     for ticket in tickets:
         email.attach_file(ticket.qr_image.path)
+
+    print(ticket.qr_image.path)
+    print("mail sent")
 
     email.send()
