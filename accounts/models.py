@@ -5,3 +5,4 @@ from django.db import models
 
 class User(AbstractUser):
     is_organizer = models.BooleanField(default=False)
+    is_email_verified = models.BooleanField(default=False)

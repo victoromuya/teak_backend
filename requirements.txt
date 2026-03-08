@@ -10,4 +10,6 @@ whitenoise
 django-cors-headers
 qrcode
 pillow
+django-ratelimit
+PyJWT
    # or paystack integration

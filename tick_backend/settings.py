@@ -48,7 +48,7 @@ INSTALLED_APPS = [
     'accounts',
     'events',
     'orders',
-    'tickets',
+    'admin_dash',
 ]
 
 
@@ -138,9 +138,9 @@ USE_L10N = True
 USE_TZ = True
 
 PAYSTACK_SECRET_KEY=os.getenv("PAYSTACK_SECRET_KEY")
-PAYSTACK_CALLBACK_URL="http://127.0.0.1:8000/payment-success"
+PAYSTACK_CALLBACK_URL="http://127.0.0.1:3000/payment-success"
 
-
+FRONTEND_URL="http://127.0.0.1:3000"
 
 EMAIL_PORT = 465
 EMAIL_USE_SSL = True

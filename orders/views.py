@@ -7,8 +7,7 @@ from .models import Order, OrderItem, Ticket
 from .serializers import OrderCreateSerializer, OrderSerializer
 
 from django.db import transaction
-from rest_framework.decorators import action, api_view
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import action, api_view, permission_classes
 
 from rest_framework import status
 from django.utils import timezone
