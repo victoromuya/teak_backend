@@ -15,8 +15,9 @@ from django.db.models import Sum, Count
 
 from django.utils import timezone
 from datetime import timedelta
-
+from drf_spectacular.utils import extend_schema
 # Create your views here.
+
 
 class AdminUserViewSet(ModelViewSet):
     queryset = User.objects.all()
@@ -45,6 +46,7 @@ class AdminTicketTypeViewSet(ModelViewSet):
     permission_classes = [IsAuthenticated, IsAdmin]
 
 
+@extend_schema(tags=["Admin"], description="Admin dashboard analytics")
 class AdminDashboardView(APIView):
     permission_classes = [IsAuthenticated, IsAdmin]
 

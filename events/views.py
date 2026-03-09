@@ -5,8 +5,12 @@ from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnl
 from .permissions import CanDeleteEvent, IsOrganizer, IsOrganizerOrAdmin
 from .models import Event, TicketType
 from .serializers import EventSerializer, TicketTypeSerializer
+from drf_spectacular.utils import extend_schema
 
-
+@extend_schema(
+    tags=["Events"],
+    description="List all events"
+)
 class EventViewSet(ModelViewSet):
     queryset = Event.objects.all()
     serializer_class = EventSerializer

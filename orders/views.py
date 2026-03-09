@@ -20,8 +20,27 @@ import qrcode
 
 from django.core.mail import EmailMessage
 from django.template.loader import render_to_string
+from drf_spectacular.utils import extend_schema, OpenApiExample
 
 
+@extend_schema(
+    tags=["Orders"],
+    examples=[
+        OpenApiExample(
+            "Create Order Example",
+            value={
+                "event": 2,
+                "items": [
+                    {
+                        "ticket_type": 2,
+                        "quantity": 1
+                    }
+                ]
+            },
+            request_only=True,
+        )
+    ]
+)
 class OrderViewSet(ModelViewSet):
     queryset = Order.objects.all()
     permission_classes = [IsAuthenticated]

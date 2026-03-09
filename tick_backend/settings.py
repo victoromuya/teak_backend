@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     'events',
     'orders',
     'admin_dash',
+    "drf_spectacular",
 ]
 
 
@@ -69,7 +70,7 @@ ROOT_URLCONF = 'tick_backend.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [os.path.join(BASE_DIR, 'templates')],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -121,8 +122,47 @@ REST_FRAMEWORK = {
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
     'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend'],
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 }
 
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Event Ticketing API",
+
+    "DESCRIPTION": """
+        Event Management API.
+
+        Features:
+        - Authentication
+        - Event creation
+        - Ticket ordering
+        - Admin analytics
+    """,
+    "VERSION": "1.0.0",
+
+    "SERVE_INCLUDE_SCHEMA": False,
+
+    "COMPONENT_SPLIT_REQUEST": True,
+
+    "SECURITY": [
+        {"BearerAuth": []}
+    ],
+
+    "COMPONENTS": {
+        "securitySchemes": {
+            "BearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT"
+            }
+        }
+    },
+
+    "SWAGGER_UI_SETTINGS": {
+        "deepLinking": True,
+        "persistAuthorization": True,
+    }
+}
 
 # Internationalization
 # https://docs.djangoproject.com/en/3.0/topics/i18n/

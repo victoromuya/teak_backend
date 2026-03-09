@@ -20,8 +20,13 @@ from .serializers import (
     PasswordResetConfirmSerializer
 )
 
+from drf_spectacular.utils import extend_schema
 
 
+@extend_schema(
+    tags=["Auth"],
+    description="Register a new user"
+)
 class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = RegisterSerializer
