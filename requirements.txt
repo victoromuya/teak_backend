@@ -12,4 +12,5 @@ qrcode
 pillow
 django-ratelimit
 PyJWT
+drf-spectacular
    # or paystack integration
