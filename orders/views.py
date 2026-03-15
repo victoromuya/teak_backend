@@ -98,55 +98,55 @@ class OrderViewSet(ModelViewSet):
 
     # @action(detail=False, methods=["get"], url_path="verify/(?P<reference>[^/.]+)")
     # def verify_payment(self, request, reference=None):
-        try:
-            order = Order.objects.select_for_update().get(reference=reference)
-        except Order.DoesNotExist:
-            return Response({"error": "Order not found"}, status=404)
+        # try:
+        #     order = Order.objects.select_for_update().get(reference=reference)
+        # except Order.DoesNotExist:
+        #     return Response({"error": "Order not found"}, status=404)
 
-        if order.status == "paid":
-            return Response({"message": "Order already verified"})
+        # if order.status == "paid":
+        #     return Response({"message": "Order already verified"})
 
-        url = f"https://api.paystack.co/transaction/verify/{reference}"
+        # url = f"https://api.paystack.co/transaction/verify/{reference}"
 
-        headers = {
-            "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
-        }
+        # headers = {
+        #     "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
+        # }
 
-        response = requests.get(url, headers=headers)
-        data = response.json()
+        # response = requests.get(url, headers=headers)
+        # data = response.json()
 
-        if not data.get("status"):
-            return Response({"error": "Payment verification failed"}, status=400)
+        # if not data.get("status"):
+        #     return Response({"error": "Payment verification failed"}, status=400)
 
-        payment_data = data["data"]
+        # payment_data = data["data"]
 
-        if payment_data["status"] != "success":
-            order.status = "failed"
-            order.save()
-            return Response({"error": "Payment not successful"}, status=400)
+        # if payment_data["status"] != "success":
+        #     order.status = "failed"
+        #     order.save()
+        #     return Response({"error": "Payment not successful"}, status=400)
 
-        # Atomic stock update
-        with transaction.atomic():
-            for item in order.items.select_related("ticket_type"):
-                ticket = item.ticket_type
+        # # Atomic stock update
+        # with transaction.atomic():
+        #     for item in order.items.select_related("ticket_type"):
+        #         ticket = item.ticket_type
 
-                if ticket.remaining < item.quantity:
-                    return Response(
-                        {"error": f"Not enough stock for {ticket.name}"},
-                        status=400,
-                    )
+        #         if ticket.remaining < item.quantity:
+        #             return Response(
+        #                 {"error": f"Not enough stock for {ticket.name}"},
+        #                 status=400,
+        #             )
 
-                ticket.remaining -= item.quantity
-                ticket.save()
+        #         ticket.remaining -= item.quantity
+        #         ticket.save()
 
-            order.status = "paid"
-            order.save()
+        #     order.status = "paid"
+        #     order.save()
 
-        return Response({
-            "message": "Payment verified successfully",
-            "order_id": order.id,
-            "status": order.status,
-        })
+        # return Response({
+        #     "message": "Payment verified successfully",
+        #     "order_id": order.id,
+        #     "status": order.status,
+        # })
 
 
 @api_view(["GET"])
