@@ -43,7 +43,14 @@ CORS_ALLOW_HEADERS = [
     # Add any other custom headers your frontend might be using
 ]
 
-ALLOWED_HOSTS = CORS_ALLOWED_ORIGINS
+ALLOWED_HOSTS = ["teak-backend.onrender.com", 
+                 "https://ticket-system-frontend-ochre.vercel.app",
+                 "http://localhost:5173",
+                "http://localhost:5174",
+                "http://localhost:5175",
+                "http://localhost:5176",
+                "http://localhost:5177",
+                 ]
 
 
 
