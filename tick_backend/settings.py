@@ -19,40 +19,7 @@ DEBUG = os.getenv("DEBUG") == "True"
 
 
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://localhost:5174",
-    "http://localhost:5175",
-    "http://localhost:5176",
-    "http://localhost:5177",
-    "https://ticket-system-frontend-ochre.vercel.app",
-]
-
-CORS_ALLOW_CREDENTIALS = True
-
-CORS_ALLOW_HEADERS = [
-    "accept",
-    "accept-encoding",
-    "authorization",
-    "content-type",
-    "dnt",
-    "origin",
-    "user-agent",
-    "x-csrftoken",
-    "x-requested-with",
-    # Add any other custom headers your frontend might be using
-]
-
-ALLOWED_HOSTS = ["teak-backend.onrender.com", 
-                 "https://ticket-system-frontend-ochre.vercel.app",
-                 "http://localhost:5173",
-                "http://localhost:5174",
-                "http://localhost:5175",
-                "http://localhost:5176",
-                "http://localhost:5177",
-                 ]
-
-
+ALLOWED_HOSTS = ["teak-backend.onrender.com", "http://127.0.0.1:8000"]
 
 # Application definition
 INSTALLED_APPS = [
@@ -65,7 +32,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework.authtoken',
     'django_filters',
-    "corsheaders",
+    'corsheaders',
     'accounts',
     'events',
     'orders',
@@ -199,6 +166,29 @@ USE_L10N = True
 USE_TZ = True
 
 
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:5175",
+    "http://localhost:5176",
+    "http://localhost:5177",
+    "https://ticket-system-frontend-ochre.vercel.app",
+]
+
+CORS_ALLOW_CREDENTIALS = True
+
+CORS_ALLOW_HEADERS = [
+    "accept",
+    "accept-encoding",
+    "authorization",
+    "content-type",
+    "dnt",
+    "origin",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
+    # Add any other custom headers your frontend might be using
+]
 
 
 PAYSTACK_SECRET_KEY=os.getenv("PAYSTACK_SECRET_KEY")
