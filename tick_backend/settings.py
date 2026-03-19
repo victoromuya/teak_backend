@@ -29,11 +29,24 @@ SECRET_KEY = os.getenv("SECRET_KEY")
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv("DEBUG") == "True"
 
-ALLOWED_HOSTS = ["*"]
+
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:5175",
+    "http://localhost:5176",
+    "http://localhost:5177",
+    "https://ticket-system-frontend-ochre.vercel.app",
+]
+
+CORS_ALLOW_CREDENTIALS = True
+
+ALLOWED_HOSTS = CORS_ALLOWED_ORIGINS
+
 
 
 # Application definition
-
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -54,6 +67,7 @@ INSTALLED_APPS = [
 
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -62,7 +76,6 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    "corsheaders.middleware.CorsMiddleware"
 ]
 
 ROOT_URLCONF = 'tick_backend.urls'
@@ -176,6 +189,9 @@ USE_I18N = True
 USE_L10N = True
 
 USE_TZ = True
+
+
+
 
 PAYSTACK_SECRET_KEY=os.getenv("PAYSTACK_SECRET_KEY")
 PAYSTACK_CALLBACK_URL="http://127.0.0.1:3000/payment-success"
