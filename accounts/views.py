@@ -16,21 +16,20 @@ from django_ratelimit.decorators import ratelimit
 from django.utils.decorators import method_decorator
 from .utils.email_tokens import verify_email_token
 from .serializers import (
+    LoginSerializer,
     PasswordResetRequestSerializer,
     PasswordResetConfirmSerializer
 )
 
 from drf_spectacular.utils import extend_schema
 from rest_framework_simplejwt.views import TokenObtainPairView
-from .serializers import MyTokenObtainPairSerializer
 
 
 User = get_user_model()
 
 
-
 class MyTokenObtainPairView(TokenObtainPairView):
-    serializer_class = MyTokenObtainPairSerializer
+    serializer_class = LoginSerializer
 
 @extend_schema(
     tags=["Auth"],

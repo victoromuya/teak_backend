@@ -2,7 +2,7 @@
 
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
-
+from rest_framework_simplejwt.tokens import RefreshToken
 from django.core.mail import send_mail
 from django.conf import settings
 from .utils.reset_tokens import generate_reset_token
@@ -39,40 +39,57 @@ class RegisterSerializer(serializers.ModelSerializer):
 
         return user
        
-    
 
 class LoginSerializer(serializers.Serializer):
     """Serializer for user authentication."""
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
+    
 
     def validate(self, data):
-        email = data.get("email")
-        password = data.get("password")
+        email = data.get('email')
+        password = data.get('password')
 
-        if email and password:
-            user = authenticate(request=self.context.get('request'), 
-                                 email=email, password=password)
-            if not user:
-                # This message will be returned in the JSON response
-                raise serializers.ValidationError("Unable to log in with provided credentials.")
-        else:
-            raise serializers.ValidationError("Must include 'email' and 'password'.")
-
-        data['user'] = user
-        return data
-
-
-class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
-    def validate(self, attrs):
+        # 1. Validation Logic
         try:
-            # This calls the built-in authenticate() logic
-            return super().validate(attrs)
-        except Exception:
-            # Custom error message for invalid email or password
-            raise serializers.ValidationError({
-                "detail": "We couldn't find an account with that email and password."
-            })
+            user = User.objects.get(email=email)
+        except User.DoesNotExist:
+            raise serializers.ValidationError({"email": "No account found with this email address."})
+
+        authenticated_user = authenticate(email=email, password=password)
+        if authenticated_user is None:
+            raise serializers.ValidationError({"password": "The password you entered is incorrect."})
+        
+        if not user.is_active:
+            raise serializers.ValidationError({"detail": "This account is inactive."})
+
+
+        # 2. Token Generation
+        refresh = RefreshToken.for_user(authenticated_user)
+
+        # 3. Return Tokens + User Data
+        return {
+            'refresh': str(refresh),
+            'access': str(refresh.access_token),
+            'user': {
+                'id': authenticated_user.id,
+                'email': authenticated_user.email,
+                'first_name': authenticated_user.first_name,
+                'last_name': authenticated_user.last_name,
+            }
+        }
+
+
+# class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
+#     def validate(self, attrs):
+#         try:
+#             # This calls the built-in authenticate() logic
+#             return super().validate(attrs)
+#         except Exception:
+#             # Custom error message for invalid email or password
+#             raise serializers.ValidationError({
+#                 "detail": "We couldn't find an account with that email and password."
+#             })
         
 
 
