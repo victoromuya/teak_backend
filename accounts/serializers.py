@@ -76,6 +76,9 @@ class LoginSerializer(serializers.Serializer):
                 'email': authenticated_user.email,
                 'first_name': authenticated_user.first_name,
                 'last_name': authenticated_user.last_name,
+                'is_organizer': authenticated_user.is_organizer,
+                'is_email_verified': authenticated_user.is_email_verified,
+                'is_active': authenticated_user.is_active,
             }
         }
 
