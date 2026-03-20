@@ -21,9 +21,16 @@ from .serializers import (
 )
 
 from drf_spectacular.utils import extend_schema
+from rest_framework_simplejwt.views import TokenObtainPairView
+from .serializers import MyTokenObtainPairSerializer
 
 
 User = get_user_model()
+
+
+
+class MyTokenObtainPairView(TokenObtainPairView):
+    serializer_class = MyTokenObtainPairSerializer
 
 @extend_schema(
     tags=["Auth"],

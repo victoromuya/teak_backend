@@ -6,7 +6,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.mail import send_mail
 from django.conf import settings
 from .utils.reset_tokens import generate_reset_token
-
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth.password_validation import validate_password
 from .utils.reset_tokens import verify_reset_token
 from .utils.email_tokens import generate_email_verification_token
@@ -22,6 +22,12 @@ class RegisterSerializer(serializers.ModelSerializer):
         model = User
         fields = ['id', 'email', 'password', 'first_name', 'last_name', 'is_organizer']
 
+    
+    def validate_email(self, value):
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("A user with this email already exists.")
+        return value
+
     def create(self, validated_data):
         role = validated_data.pop("role", "user")
 
@@ -32,6 +38,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             user.save()
 
         return user
+       
     
 
 class LoginSerializer(serializers.Serializer):
@@ -40,11 +47,33 @@ class LoginSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True)
 
     def validate(self, data):
-        # Authenticate user
-        user = authenticate(**data)
-        if not user:
-            raise serializers.ValidationError("Invalid credentials.")
-        return {'user': user}
+        email = data.get("email")
+        password = data.get("password")
+
+        if email and password:
+            user = authenticate(request=self.context.get('request'), 
+                                 email=email, password=password)
+            if not user:
+                # This message will be returned in the JSON response
+                raise serializers.ValidationError("Unable to log in with provided credentials.")
+        else:
+            raise serializers.ValidationError("Must include 'email' and 'password'.")
+
+        data['user'] = user
+        return data
+
+
+class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
+    def validate(self, attrs):
+        try:
+            # This calls the built-in authenticate() logic
+            return super().validate(attrs)
+        except Exception:
+            # Custom error message for invalid email or password
+            raise serializers.ValidationError({
+                "detail": "We couldn't find an account with that email and password."
+            })
+        
 
 
 class UserSerializer(serializers.ModelSerializer):
