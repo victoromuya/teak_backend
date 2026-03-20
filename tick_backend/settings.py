@@ -19,7 +19,7 @@ DEBUG = os.getenv("DEBUG") == "True"
 
 
 
-ALLOWED_HOSTS = ["teak-backend.onrender.com", "http://127.0.0.1:8000", "127.0.0.1"]
+ALLOWED_HOSTS = ["teak-backend.onrender.com"]
 
 # Application definition
 INSTALLED_APPS = [
@@ -202,7 +202,7 @@ CORS_ALLOW_HEADERS = [
 PAYSTACK_SECRET_KEY=os.getenv("PAYSTACK_SECRET_KEY")
 PAYSTACK_CALLBACK_URL="http://127.0.0.1:3000/payment-success"
 
-FRONTEND_URL="http://127.0.0.1:3000"
+FRONTEND_URL="https://ticket-system-frontend-ochre.vercel.app"
 
 EMAIL_PORT = 465
 EMAIL_USE_SSL = True
