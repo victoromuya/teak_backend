@@ -6,6 +6,7 @@ from .views import RegisterView, UserProfileView, OrganizerProfileView, \
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
+    TokenBlacklistView,
 )
 
 
@@ -13,6 +14,7 @@ urlpatterns = [
     path('register/', RegisterView.as_view()),
     path('login/', TokenObtainPairView.as_view()),
     path('refresh/', TokenRefreshView.as_view()),
+    path('api/logout/', TokenBlacklistView.as_view(), name='token_blacklist'),
     path("organizer/profile/", OrganizerProfileView.as_view()),
     path("user/profile/", UserProfileView.as_view()),
 

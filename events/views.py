@@ -16,7 +16,7 @@ class EventViewSet(ModelViewSet):
     serializer_class = EventSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
 
-    # 🔐 Only restrict UPDATE & DELETE
+    # Only restrict UPDATE & DELETE
     def get_permissions(self):
         # Anyone can view
         if self.action == "create":
@@ -28,9 +28,9 @@ class EventViewSet(ModelViewSet):
         return []  # No permissions required for read
         # return [IsAuthenticatedOrReadOnly()]
 
-        # 🔹 CREATE event
-        if self.action == "create":
-            return [IsOrganizerOrAdmin()]
+        # CREATE event
+        # if self.action == "create":
+        #     return [IsOrganizerOrAdmin()]
 
     
 

@@ -1,7 +1,7 @@
-from rest_framework import generics, status
+from rest_framework import generics, status, permissions
 from rest_framework.viewsets import ModelViewSet
-from .models import User
-from .serializers import RegisterSerializer, UserSerializer
+# from .models import User
+from .serializers import RegisterSerializer, UserSerializer, EmailVerificationRequestSerializer
 from rest_framework.views import APIView
 
 from .permissions import IsAdmin, IsOrganizer, IsNormalUser
@@ -11,7 +11,7 @@ from django.db.models import Sum, Count
 
 from django.utils import timezone
 from datetime import timedelta
-
+from django.contrib.auth import get_user_model
 from django_ratelimit.decorators import ratelimit
 from django.utils.decorators import method_decorator
 from .utils.email_tokens import verify_email_token
@@ -23,6 +23,8 @@ from .serializers import (
 from drf_spectacular.utils import extend_schema
 
 
+User = get_user_model()
+
 @extend_schema(
     tags=["Auth"],
     description="Register a new user"
@@ -30,6 +32,7 @@ from drf_spectacular.utils import extend_schema
 class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = RegisterSerializer
+    permission_classes = [permissions.AllowAny]  # Allow unauthenticated users to sign up
 
 
 class OrganizerProfileView(APIView):

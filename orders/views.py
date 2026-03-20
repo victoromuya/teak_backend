@@ -208,7 +208,7 @@ def verify_payment(request, reference):
             status=400
         )
 
-    # 5️⃣ Security: Validate amount
+    # Security: Validate amount
     expected_amount = int(order.total_amount * 100)
 
     if payment_data["amount"] != expected_amount:
@@ -217,7 +217,7 @@ def verify_payment(request, reference):
             status=400
         )
 
-    # 6️⃣ Atomic transaction
+    # 6️Atomic transaction
     with transaction.atomic():
 
         # Lock ticket rows to prevent overselling

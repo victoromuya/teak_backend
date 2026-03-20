@@ -10,7 +10,8 @@ class EventSerializer(serializers.ModelSerializer):
         model = Event
         fields = '__all__'
         read_only_fields = ['organizer', 'created_at']
-
+        start_time = serializers.TimeField(format='%H:%M', input_formats=['%I:%M %p', '%H:%M'])
+        end_time = serializers.TimeField(format='%H:%M', input_formats=['%I:%M %p', '%H:%M'])
 
 class TicketTypeSerializer(serializers.ModelSerializer):
     event = serializers.PrimaryKeyRelatedField(

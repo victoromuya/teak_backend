@@ -13,7 +13,7 @@ from events.models import TicketType
 def paystack_webhook(request):
     payload = request.body
 
-    # ⚠️ TEMPORARY: Skip signature validation for local testing
+    # TEMPORARY: Skip signature validation for local testing
     if settings.DEBUG:
         event = json.loads(payload)
     else:

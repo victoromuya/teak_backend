@@ -2,7 +2,7 @@ from django.shortcuts import render
 from rest_framework.views import APIView
 from rest_framework import generics
 from rest_framework.viewsets import ModelViewSet
-from accounts.models import User
+
 from accounts.serializers import UserSerializer
 from events.serializers import EventSerializer, TicketTypeSerializer
 from orders.serializers import OrderSerializer, TicketSerializer
@@ -16,7 +16,10 @@ from django.db.models import Sum, Count
 from django.utils import timezone
 from datetime import timedelta
 from drf_spectacular.utils import extend_schema
-# Create your views here.
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
+
 
 
 class AdminUserViewSet(ModelViewSet):

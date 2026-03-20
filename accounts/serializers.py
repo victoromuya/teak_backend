@@ -1,7 +1,6 @@
 # accounts/serializers.py
 
 from rest_framework import serializers
-from .models import User
 from django.contrib.auth.password_validation import validate_password
 
 from django.core.mail import send_mail
@@ -11,13 +10,17 @@ from .utils.reset_tokens import generate_reset_token
 from django.contrib.auth.password_validation import validate_password
 from .utils.reset_tokens import verify_reset_token
 from .utils.email_tokens import generate_email_verification_token
+from django.contrib.auth import authenticate
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
 
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
 
     class Meta:
         model = User
-        fields = ['username', 'email', 'password', 'first_name', 'last_name', 'is_organizer']
+        fields = ['id', 'email', 'password', 'first_name', 'last_name', 'is_organizer']
 
     def create(self, validated_data):
         role = validated_data.pop("role", "user")
@@ -29,6 +32,19 @@ class RegisterSerializer(serializers.ModelSerializer):
             user.save()
 
         return user
+    
+
+class LoginSerializer(serializers.Serializer):
+    """Serializer for user authentication."""
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True)
+
+    def validate(self, data):
+        # Authenticate user
+        user = authenticate(**data)
+        if not user:
+            raise serializers.ValidationError("Invalid credentials.")
+        return {'user': user}
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -37,7 +53,6 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             "id",
-            "username",
             "email",
             "first_name",
             "last_name",

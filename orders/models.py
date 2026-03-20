@@ -2,6 +2,7 @@ import uuid
 from django.db import models
 from django.conf import settings
 from events.models import Event, TicketType
+from datetime import timezone, timedelta
 
 
 class Order(models.Model):

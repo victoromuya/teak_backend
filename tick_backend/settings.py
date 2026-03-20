@@ -19,7 +19,7 @@ DEBUG = os.getenv("DEBUG") == "True"
 
 
 
-ALLOWED_HOSTS = ["teak-backend.onrender.com", "http://127.0.0.1:8000"]
+ALLOWED_HOSTS = ["teak-backend.onrender.com", "http://127.0.0.1:8000", "127.0.0.1"]
 
 # Application definition
 INSTALLED_APPS = [
@@ -31,6 +31,8 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'rest_framework.authtoken',
+    'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
     'django_filters',
     'corsheaders',
     'accounts',
@@ -103,7 +105,8 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-AUTH_USER_MODEL = 'accounts.User'
+# AUTH_USER_MODEL = 'accounts.User'
+AUTH_USER_MODEL = 'accounts.CustomUser'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
@@ -165,6 +168,11 @@ USE_L10N = True
 
 USE_TZ = True
 
+TIME_INPUT_FORMATS = [
+    '%H:%M:%S',    # '14:30:59'
+    '%H:%M',       # '14:30'
+    '%I:%M %p',    # '02:30 PM' (adds support for AM/PM)
+]
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
