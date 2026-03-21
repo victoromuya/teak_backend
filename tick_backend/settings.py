@@ -1,6 +1,7 @@
 
 import os
 from dotenv import load_dotenv
+from datetime import timedelta
 
 load_dotenv() # Load environment variables from .env file
 
@@ -205,11 +206,11 @@ PAYSTACK_CALLBACK_URL="http://127.0.0.1:3000/payment-success"
 FRONTEND_URL="https://ticket-system-frontend-ochre.vercel.app"
 
 
-# Extend the session to 1 day (86400 seconds)
-SESSION_COOKIE_AGE = 86400
-
-# Optional: ensure the session is saved on every request to update the expiry on each activity
-SESSION_SAVE_EVERY_REQUEST = True 
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=15),
+    # Other settings...
+}
 
 
 EMAIL_PORT = 465
