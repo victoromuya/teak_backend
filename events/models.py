@@ -11,8 +11,22 @@ class Event(models.Model):
         on_delete=models.CASCADE,
         related_name="events"
     )
+
+    EVENT_cATEGORY = (
+        ("Music", "MUSIC"),
+        ("Sports", "SPORTS"),
+        ("Tech", "TECH"),
+        ("Art", "ART"),
+    )
+
+    EVENT_NATURE = (
+        ("Online", "ONLINE"),
+        ("In-Person", "IN_PERSON"),
+    )
+
     title = models.CharField(max_length=255)
-    category = models.CharField(max_length=100, blank=True, null=True)  # Music, Sports, Tech, etc.
+    category = models.CharField(max_length=100, choices=EVENT_cATEGORY, blank=True, null=True)  # Music, Sports, Tech, etc.
+    nature = models.CharField(max_length=100, choices=EVENT_NATURE, blank=True, null=True)  # Online or In-Person
     description = models.TextField()
     address = models.CharField(max_length=255, blank=True, null=True)
     state=models.CharField(max_length=100,  blank=True, null=True)
