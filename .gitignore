@@ -1,3 +1,4 @@
 /tikenv
 .env
 changenv.sh
+db.sqlite3
