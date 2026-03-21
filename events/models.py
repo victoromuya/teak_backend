@@ -13,15 +13,15 @@ class Event(models.Model):
     )
 
     EVENT_cATEGORY = (
-        ("Music", "MUSIC"),
-        ("Sports", "SPORTS"),
-        ("Tech", "TECH"),
-        ("Art", "ART"),
+        ("MUSIC", "MUSIC"),
+        ("SPORTS", "SPORTS"),
+        ("TECH", "TECH"),
+        ("ART", "ART"),
     )
 
     EVENT_TYPE = (
-        ("Online", "ONLINE"),
-        ("In-Person", "IN_PERSON"),
+        ("ONLINE", "ONLINE"),
+        ("IN_PERSON", "IN_PERSON"),
     )
 
     title = models.CharField(max_length=255)
