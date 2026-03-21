@@ -12,12 +12,7 @@ class Event(models.Model):
         related_name="events"
     )
 
-    EVENT_cATEGORY = (
-        ("MUSIC", "MUSIC"),
-        ("SPORTS", "SPORTS"),
-        ("TECH", "TECH"),
-        ("ART", "ART"),
-    )
+
 
     EVENT_TYPE = (
         ("ONLINE", "ONLINE"),
@@ -25,7 +20,7 @@ class Event(models.Model):
     )
 
     title = models.CharField(max_length=255)
-    category = models.CharField(max_length=100, choices=EVENT_cATEGORY, blank=True, null=True)  # Music, Sports, Tech, etc.
+    category = models.CharField(max_length=100, blank=True, null=True)  # Music, Sports, Tech, etc.
     type = models.CharField(max_length=100, choices=EVENT_TYPE, blank=True, null=True)  # Online or In-Person
     description = models.TextField()
     address = models.CharField(max_length=255, blank=True, null=True)
