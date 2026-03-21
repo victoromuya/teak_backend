@@ -21,7 +21,7 @@ DEBUG = os.getenv("DEBUG") == "True"
 
 
 
-ALLOWED_HOSTS = ["teak-backend.onrender.com"]
+ALLOWED_HOSTS = ["teak-backend.onrender.com", "127.0.0.1"]
 
 # Application definition
 INSTALLED_APPS = [
