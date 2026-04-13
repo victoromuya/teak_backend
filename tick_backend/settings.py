@@ -21,7 +21,7 @@ DEBUG = os.getenv("DEBUG") == "True"
 
 
 
-ALLOWED_HOSTS = ["teak-backend.onrender.com", "127.0.0.1", "teak-backend-41u0ynn1u-victoromuyas-projects.vercel.app"]
+ALLOWED_HOSTS = ["teak-backend.onrender.com", "127.0.0.1", "teak-backend.vercel.app/"]
 
 # Application definition
 INSTALLED_APPS = [
