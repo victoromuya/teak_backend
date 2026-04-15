@@ -12,6 +12,7 @@ from .utils.reset_tokens import verify_reset_token
 from .utils.email_tokens import generate_email_verification_token
 from django.contrib.auth import authenticate
 from django.contrib.auth import get_user_model
+from glob_utils.send_email import send_email
 
 User = get_user_model()
 
@@ -126,15 +127,19 @@ class PasswordResetRequestSerializer(serializers.Serializer):
         token = generate_reset_token(user)
         print(token)
 
-        reset_link = f"{settings.FRONTEND_URL}/reset-password?token={token}"
+        reset_link = f"{settings.FRONTEND_URL}/api/auth/password-reset/confirm?token={token}"
         print(reset_link)
 
-        send_mail(
-            subject="Reset your password",
-            message=f"Click the link to reset your password: {reset_link}",
-            from_email=settings.EMAIL_HOST_USER,
-            recipient_list=[email],
-        )
+        # send_mail(
+        #     subject="Reset your password",
+        #     message=f"Click the link to reset your password: {reset_link}",
+        #     from_email=settings.EMAIL_HOST_USER,
+        #     recipient_list=[email],
+        # )
+        
+        send_email("Reset your password", 
+                   f"Click the link to reset your password: {reset_link}", email)
+
 
         return data
 
@@ -178,38 +183,16 @@ class EmailVerificationRequestSerializer(serializers.Serializer):
 
         token = generate_email_verification_token(user)
         
-        verification_link = f"{settings.FRONTEND_URL}/verify-email?token={token}"
+        verification_link = f"{settings.FRONTEND_URL}/api/auth/verify-email?token={token}"
         print(verification_link)
         # Send email
-        send_mail(
-            subject="Verify your email",
-            message=f"Click the link to verify your email: {verification_link}",
-            from_email=settings.EMAIL_HOST_USER,
-            recipient_list=[user.email],
-        )
+        # send_mail(
+        #     subject="Verify your email",
+        #     message=f"Click the link to verify your email: {verification_link}",
+        #     from_email=settings.EMAIL_HOST_USER,
+        #     recipient_list=[user.email],
+        # )
 
-        return data
-
-class EmailVerificationSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-
-    def validate(self, data):
-        try:
-            user = User.objects.get(email=data["email"])
-        except User.DoesNotExist:
-            return data  # Do not reveal if user exists
-
-        if user.is_email_verified:
-            return data
-
-        token = generate_email_verification_token(user)
-        verification_link = f"{settings.FRONTEND_URL}/verify-email?token={token}"
-
-        send_mail(
-            subject="Verify your email",
-            message=f"Click the link to verify your email: {verification_link}",
-            from_email=settings.EMAIL_HOST_USER,
-            recipient_list=[user.email]
-        )
+        send_email("Verify your email", f"Click the link to verify your email: {verification_link}", user.email)
 
         return data

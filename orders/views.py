@@ -1,8 +1,12 @@
+import smtplib
+
 import requests
 from django.conf import settings
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+
+from glob_utils.send_email import send_email
 from .models import Order, OrderItem, Ticket
 from .serializers import OrderCreateSerializer, OrderSerializer
 
@@ -264,10 +268,6 @@ def verify_payment(request, reference):
    
         generate_tickets(order)
 
-        # Send confirmation email
-      
-        send_ticket_email(order)
-
     return Response({
         "message": "Payment verified successfully",
         "order_reference": order.reference,
@@ -306,29 +306,87 @@ def generate_tickets(order):
 def send_ticket_email(order):
     tickets = order.ticket_set.all()
 
-    subject = "Your Ticket Confirmation"
-    body = f"""
-    Hi,
+    msg = EmailMessage()
+    msg["Subject"] = "🎟️ Your Ticket Confirmation"
+    msg["From"] = settings.EMAIL_HOST_USER
+    msg["To"] = order.user.email
 
-    Your payment was successful.
+    # Plain fallback (for email clients that don’t support HTML)
+    msg.set_content(f"""
+Hi,
 
-    Order Reference: {order.reference}
-    Number of Tickets: {tickets.count()}
+Your payment was successful.
 
-    Your QR tickets are attached.
+Order Reference: {order.reference}
+Tickets: {tickets.count()}
+
+Please view this email in HTML to see your QR codes.
+""")
+
+    # 🔥 Build HTML content dynamically
+    qr_html_blocks = ""
+
+    for i, ticket in enumerate(tickets):
+        qr_html_blocks += f"""
+        <div style="margin-bottom:20px;">
+            <p><strong>Ticket #{i+1}</strong></p>
+            <img src="cid:qr_{i}" width="200" />
+        </div>
+        """
+
+    html_content = f"""
+    <html>
+        <body style="font-family: Arial; background:#f4f4f4; padding:20px;">
+            <div style="max-width:600px; margin:auto; background:white; padding:20px; border-radius:10px;">
+                
+                <h2 style="color:#333;">🎉 Payment Successful!</h2>
+                
+                <p>Your ticket has been confirmed.</p>
+                
+                <p><strong>Order Ref:</strong> {order.reference}</p>
+                <p><strong>Total Tickets:</strong> {tickets.count()}</p>
+
+                <hr />
+
+                <h3>Your QR Tickets</h3>
+
+                {qr_html_blocks}
+
+                <hr />
+
+                <p style="font-size:12px; color:gray;">
+                    Please present this QR code at the event entrance.
+                </p>
+
+                <p><strong>Event:</strong> {order.event.title}</p>
+                <p><strong>Date:</strong> {order.event.start_date}</p>
+                <p><strong>Location:</strong> {order.event.city}</p>
+
+            </div>
+        </body>
+    </html>
     """
 
-    email = EmailMessage(
-        subject,
-        body,
-        settings.EMAIL_HOST_USER,
-        [order.user.email],   # assuming order has email field
-    )
+    # Attach HTML version
+    msg.add_alternative(html_content, subtype="html")
 
-    for ticket in tickets:
-        email.attach_file(ticket.qr_image.path)
+    # ✅ Attach QR images inline
+    for i, ticket in enumerate(tickets):
+        if ticket.qr_image:
+            with open(ticket.qr_image.path, "rb") as f:
+                msg.get_payload()[1].add_related(
+                    f.read(),
+                    maintype="image",
+                    subtype="png",
+                    cid=f"qr_{i}"
+                )
 
-    print(ticket.qr_image.path)
-    print("mail sent")
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(settings.EMAIL_HOST_USER, settings.EMAIL_HOST_PASSWORD)
+            server.send_message(msg)
 
-    email.send()
+        print("email sent!")
+
+    except Exception as e:
+        print(f"Error: {e}")

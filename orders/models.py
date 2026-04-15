@@ -44,7 +44,7 @@ class Ticket(models.Model):
     ticket_type = models.ForeignKey(
         TicketType,
         on_delete=models.CASCADE,
-        default=1
+        default=1,
     )
 
     ticket_code = models.UUIDField(default=uuid.uuid4,editable=False,unique=True,db_index=True)

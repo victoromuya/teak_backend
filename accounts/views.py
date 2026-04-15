@@ -23,6 +23,8 @@ from .serializers import (
 
 from drf_spectacular.utils import extend_schema
 from rest_framework_simplejwt.views import TokenObtainPairView
+from events.models import Event
+from orders.models import Order 
 
 
 User = get_user_model()
@@ -49,7 +51,36 @@ class OrganizerProfileView(APIView):
             return Response({"error": "Not an organizer"}, status=403)
 
         serializer = UserSerializer(request.user)
-        return Response(serializer.data)
+
+        events = Event.objects.filter(organizer=request.user)
+
+        total_events = events.count()
+
+        total_tickets_sold = Order.objects.filter(
+            event__organizer=request.user,
+            status="paid"  # if you track payment status
+        ).aggregate(total=Count('id'))['total'] or 0
+
+        total_revenue = Order.objects.filter(
+            event__organizer=request.user,
+            status="paid"
+        ).aggregate(total=Sum('total_amount'))['total'] or 0
+
+        upcoming_events = events.filter(
+            start_date__gte=timezone.now()
+        ).count()
+
+        return Response({
+            "user": serializer.data,
+            "stats": {
+                "total_events": total_events,
+                "tickets_sold": total_tickets_sold,
+                "total_revenue": total_revenue,
+                "upcoming_events": upcoming_events,
+            }
+        })
+    
+       
 
     def put(self, request):
         if not request.user.is_organizer:
@@ -74,7 +105,12 @@ class UserProfileView(APIView):
         serializer = UserSerializer(request.user)
         return Response(serializer.data)
 
-
+@extend_schema(
+    tags=["auth"],
+    description="Request Password Reset link",
+    request=PasswordResetRequestSerializer,
+    responses={200: None}
+)
 class PasswordResetRequestView(APIView):
 
     @method_decorator(ratelimit(key="ip", rate="5/m", block=True))
@@ -87,7 +123,12 @@ class PasswordResetRequestView(APIView):
 
         return Response(serializer.errors, status=400)
 
-
+@extend_schema(
+    tags=["auth"],
+    description="Confirm Password Reset",
+    request=PasswordResetConfirmSerializer,
+    responses={200: None}
+)
 class PasswordResetConfirmView(APIView):
 
     @method_decorator(ratelimit(key="ip", rate="10/m", block=True))
@@ -100,7 +141,12 @@ class PasswordResetConfirmView(APIView):
 
         return Response(serializer.errors, status=400)
 
-
+@extend_schema(
+    tags=["auth"],
+    description="Request email verification link",
+    request=EmailVerificationRequestSerializer,
+    responses={200: None}
+)
 class EmailVerificationRequestView(APIView):
 
     def post(self, request):
@@ -108,6 +154,7 @@ class EmailVerificationRequestView(APIView):
         if serializer.is_valid():
             return Response({"message": "If the email exists, a verification link was sent."}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 class VerifyEmailView(APIView):
 

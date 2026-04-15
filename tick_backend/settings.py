@@ -21,7 +21,7 @@ DEBUG = os.getenv("DEBUG") == "True"
 
 
 
-ALLOWED_HOSTS = ["teak-backend.onrender.com", "127.0.0.1", "teak-backend.vercel.app"]
+ALLOWED_HOSTS = ["*"]
 
 # Application definition
 INSTALLED_APPS = [
@@ -208,7 +208,7 @@ CORS_ALLOW_HEADERS = [
 ]
 
 
-FRONTEND_URL="https://ticket-system-frontend-ochre.vercel.app"
+FRONTEND_URL=os.getenv("FRONTEND_URL")
 
 PAYSTACK_SECRET_KEY=os.getenv("PAYSTACK_SECRET_KEY")
 PAYSTACK_CALLBACK_URL=f"{FRONTEND_URL}/payment-success"
@@ -222,17 +222,10 @@ SIMPLE_JWT = {
 }
 
 
-EMAIL_PORT = 465
-EMAIL_USE_SSL = True
-EMAIL_USE_TLS = False
-
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = "smtp.gmail.com"
-EMAIL_USE_SSL = True
 EMAIL_HOST_USER = 'premiereleadtech@gmail.com'
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
 
-EMAIL_TIMEOUT = 30
+EMAIL_TIMEOUT = 60
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/3.0/howto/static-files/
