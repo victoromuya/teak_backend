@@ -37,6 +37,9 @@ class Event(models.Model):
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        db_table = 'events_event'
+
 
 class TicketType(models.Model):
     event = models.ForeignKey(

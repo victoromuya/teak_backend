@@ -21,7 +21,9 @@ DEBUG = os.getenv("DEBUG") == "True"
 
 
 
-ALLOWED_HOSTS = ["*"]
+ALLOWED_HOSTS = ["teak-backend.onrender.com", "127.0.0.1", 
+                 "teak-backend.vercel.app", 
+                 "localhost:8000", "http://localhost:8000"]
 
 # Application definition
 INSTALLED_APPS = [
@@ -79,20 +81,17 @@ WSGI_APPLICATION = 'tick_backend.wsgi.application'
 
 
 # Database
-# https://docs.djangoproject.com/en/3.0/ref/settings/#databases
-
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': os.path.join(BASE_DIR, 'db.sqlite3'),
-#     }
-# }
 
 DATABASES = {
     'default': dj_database_url.config(
         default=os.getenv("DATABASE_URL", "sqlite:///db.sqlite3"),
         conn_max_age=600  # Optional: for persistent connections
     )
+}
+
+# Add this to force Django to look in the 'public' schema
+DATABASES['default']['OPTIONS'] = {
+    'options': '-c search_path=public'
 }
 
 
