@@ -28,12 +28,17 @@ class Order(models.Model):
             timezone.now() > self.created_at + timedelta(minutes=10)
         )
 
+    class Meta:
+        db_table = 'Orders'
 
 class OrderItem(models.Model):
     order = models.ForeignKey(Order, related_name="items", on_delete=models.CASCADE)
     ticket_type = models.ForeignKey(TicketType, on_delete=models.CASCADE)
     quantity = models.PositiveIntegerField()
     price = models.DecimalField(max_digits=10, decimal_places=2, default=100.0)
+
+    class Meta:
+        db_table = 'OrderItems'
 
 
 
@@ -51,3 +56,6 @@ class Ticket(models.Model):
     qr_image = models.ImageField(upload_to="ticketQR/")
     is_used = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'Tickets'

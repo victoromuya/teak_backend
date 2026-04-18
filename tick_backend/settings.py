@@ -85,13 +85,7 @@ WSGI_APPLICATION = 'tick_backend.wsgi.application'
 DATABASES = {
     'default': dj_database_url.config(
         default=os.getenv("DATABASE_URL", "sqlite:///db.sqlite3"),
-        conn_max_age=600  # Optional: for persistent connections
     )
-}
-
-# Add this to force Django to look in the 'public' schema
-DATABASES['default']['OPTIONS'] = {
-    'options': '-c search_path=public'
 }
 
 

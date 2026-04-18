@@ -38,7 +38,7 @@ class Event(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        db_table = 'events_event'
+        db_table = 'Events'
 
 
 class TicketType(models.Model):
@@ -53,3 +53,6 @@ class TicketType(models.Model):
     quantity = models.PositiveIntegerField(default=100)
     remaining = models.PositiveIntegerField(default=100)
     created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = 'TicketTypes'
