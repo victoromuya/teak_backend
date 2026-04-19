@@ -3,12 +3,14 @@ import os
 import dj_database_url
 from dotenv import load_dotenv
 from datetime import timedelta
+from pathlib import Path
 
-load_dotenv() # Load environment variables from .env file
+ # Load environment variables from .env file
 
-# Build paths inside the project like this: os.path.join(BASE_DIR, ...)
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = Path(__file__).resolve().parent.parent
+CORE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/3.0/howto/deployment/checklist/
@@ -18,8 +20,6 @@ SECRET_KEY = os.getenv("SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv("DEBUG") == "True"
-
-
 
 ALLOWED_HOSTS = ["teak-backend.onrender.com", "127.0.0.1", 
                  "teak-backend.vercel.app", 
@@ -215,9 +215,14 @@ SIMPLE_JWT = {
 }
 
 
-EMAIL_HOST_USER = 'premiereleadtech@gmail.com'
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST = "smtp.gmail.com"
+EMAIL_PORT = 465
+EMAIL_USE_SSL = True
+EMAIL_USE_TLS = False
+EMAIL_HOST_USER = "premiereleadtech@gmail.com"
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
-
+DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
 EMAIL_TIMEOUT = 60
 
 # Static files (CSS, JavaScript, Images)
@@ -233,5 +238,3 @@ MEDIA_ROOT = os.path.join(BASE_DIR, "media")
 MEDIA_URL = "/media/"
 
 STATIC_URL = '/static/'
-
-

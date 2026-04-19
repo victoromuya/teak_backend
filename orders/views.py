@@ -1,5 +1,3 @@
-import smtplib
-
 import requests
 from django.conf import settings
 from rest_framework.viewsets import ModelViewSet
@@ -22,8 +20,8 @@ from django.core.files import File
 from io import BytesIO
 import qrcode
 
-from django.core.mail import EmailMessage
-from django.template.loader import render_to_string
+from django.core.mail import EmailMultiAlternatives
+from email.mime.image import MIMEImage
 from drf_spectacular.utils import extend_schema, OpenApiExample
 
 
@@ -153,6 +151,13 @@ class OrderViewSet(ModelViewSet):
         # })
 
 
+
+
+@extend_schema(
+    tags=["Orders"],
+    description="Verify Payment",
+    responses={200: None}
+)
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])   # Paystack redirects without auth
 def verify_payment(request, reference):
@@ -303,7 +308,9 @@ def generate_tickets(order):
     send_ticket_email(order)
 
 
-def send_ticket_email(order):
+def _legacy_send_ticket_email_unused(order):
+    return None
+    '''
     tickets = order.ticket_set.all()
 
     msg = EmailMessage()
@@ -388,5 +395,88 @@ Please view this email in HTML to see your QR codes.
 
         print("email sent!")
 
+    except Exception as e:
+        print(f"Error: {e}")
+    '''
+
+
+def send_ticket_email(order):
+    tickets = order.ticket_set.all()
+    subject = "Your Ticket Confirmation"
+    from_email = settings.EMAIL_HOST_USER
+    recipient_list = [order.user.email]
+
+    text_content = f"""
+Hi,
+
+Your payment was successful.
+
+Order Reference: {order.reference}
+Tickets: {tickets.count()}
+
+Please view this email in HTML to see your QR codes.
+"""
+
+    qr_html_blocks = ""
+    for i, ticket in enumerate(tickets):
+        qr_html_blocks += f"""
+        <div style="margin-bottom:20px;">
+            <p><strong>Ticket #{i + 1}</strong></p>
+            <img src="cid:qr_{i}" width="200" />
+        </div>
+        """
+
+    html_content = f"""
+    <html>
+        <body style="font-family: Arial; background:#f4f4f4; padding:20px;">
+            <div style="max-width:600px; margin:auto; background:white; padding:20px; border-radius:10px;">
+                <h2 style="color:#333;">Payment Successful!</h2>
+                <p>Your ticket has been confirmed.</p>
+                <p><strong>Order Ref:</strong> {order.reference}</p>
+                <p><strong>Total Tickets:</strong> {tickets.count()}</p>
+
+                <hr />
+
+                <h3>Your QR Tickets</h3>
+                {qr_html_blocks}
+
+                <hr />
+
+                <p style="font-size:12px; color:gray;">
+                    Please present this QR code at the event entrance.
+                </p>
+
+                <p><strong>Event:</strong> {order.event.title}</p>
+                <p><strong>Date:</strong> {order.event.start_date}</p>
+                <p><strong>Location:</strong> {order.event.city}</p>
+            </div>
+        </body>
+    </html>
+    """
+
+    msg = EmailMultiAlternatives(
+        subject=subject,
+        body=text_content,
+        from_email=from_email,
+        to=recipient_list,
+    )
+    msg.attach_alternative(html_content, "text/html")
+
+    for i, ticket in enumerate(tickets):
+        if ticket.qr_image:
+            with open(ticket.qr_image.path, "rb") as f:
+                image = MIMEImage(f.read(), _subtype="png")
+                image.add_header("Content-ID", f"<qr_{i}>")
+                image.add_header(
+                    "Content-Disposition",
+                    "inline",
+                    filename=f"{ticket.ticket_code}.png",
+                )
+                msg.attach(image)
+
+    try:
+        msg.mixed_subtype = "related"
+        msg.send(fail_silently=False)
+        print("email sent!")
     except Exception as e:
         print(f"Error: {e}")
