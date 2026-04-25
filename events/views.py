@@ -61,6 +61,10 @@ class EventViewSet(ModelViewSet):
         return obj
 
 
+@extend_schema(
+    tags=["Events"],
+    description="List all ticket types"
+)
 class TicketTypeViewSet(ModelViewSet):
 
     queryset = TicketType.objects.all()

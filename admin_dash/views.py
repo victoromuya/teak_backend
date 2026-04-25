@@ -1,25 +1,59 @@
-from django.shortcuts import render
-from rest_framework.views import APIView
-from rest_framework import generics
-from rest_framework.viewsets import ModelViewSet
+from datetime import timedelta
 
-from accounts.serializers import UserSerializer
-from events.serializers import EventSerializer, TicketTypeSerializer
-from orders.serializers import OrderSerializer, TicketSerializer
-from events.models import Event, TicketType
-from orders.models import Order, Ticket
-from accounts.permissions import IsAdmin, IsOrganizer, IsNormalUser
+from django.contrib.auth import get_user_model
+from django.db.models import Count, Sum
+from django.utils import timezone
+from drf_spectacular.utils import extend_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from django.db.models import Sum, Count
+from rest_framework.views import APIView
+from rest_framework.viewsets import ModelViewSet
 
-from django.utils import timezone
-from datetime import timedelta
-from drf_spectacular.utils import extend_schema
-from django.contrib.auth import get_user_model
+from accounts.permissions import IsAdmin
+from accounts.serializers import UserSerializer
+from events.models import Event, TicketType
+from events.serializers import EventSerializer, TicketTypeSerializer
+from orders.models import Order, Ticket
+from orders.serializers import OrderSerializer, TicketSerializer
+
+from .serializers import AdminLoginSerializer
+
 
 User = get_user_model()
 
+
+@extend_schema(
+    tags=["admin auth"],
+    description="Authenticate an admin user and return JWT tokens",
+    request=AdminLoginSerializer,
+)
+class AdminLoginView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def post(self, request):
+        serializer = AdminLoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return Response(serializer.validated_data)
+
+
+@extend_schema(tags=["admin auth"], description="Get the currently authenticated admin")
+class AdminAuthMeView(APIView):
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def get(self, request):
+        return Response(
+            {
+                "user": {
+                    "id": request.user.id,
+                    "email": request.user.email,
+                    "first_name": request.user.first_name,
+                    "last_name": request.user.last_name,
+                    "is_staff": request.user.is_staff,
+                    "is_superuser": request.user.is_superuser,
+                }
+            }
+        )
 
 
 class AdminUserViewSet(ModelViewSet):
@@ -33,15 +67,18 @@ class AdminEventViewSet(ModelViewSet):
     serializer_class = EventSerializer
     permission_classes = [IsAuthenticated, IsAdmin]
 
+
 class AdminOrderViewSet(ModelViewSet):
     queryset = Order.objects.all()
     serializer_class = OrderSerializer
     permission_classes = [IsAuthenticated, IsAdmin]
 
+
 class AdminTicketViewSet(ModelViewSet):
     queryset = Ticket.objects.all()
     serializer_class = TicketSerializer
     permission_classes = [IsAuthenticated, IsAdmin]
+
 
 class AdminTicketTypeViewSet(ModelViewSet):
     queryset = TicketType.objects.all()
@@ -49,55 +86,46 @@ class AdminTicketTypeViewSet(ModelViewSet):
     permission_classes = [IsAuthenticated, IsAdmin]
 
 
-@extend_schema(tags=["Admin"], description="Admin dashboard analytics")
+@extend_schema(tags=["admin"], description="Admin dashboard analytics")
 class AdminDashboardView(APIView):
     permission_classes = [IsAuthenticated, IsAdmin]
 
     def get(self, request):
-
-        # Basic counts
         total_users = User.objects.count()
         total_organizers = User.objects.filter(is_organizer=True).count()
         total_events = Event.objects.count()
         total_orders = Order.objects.count()
 
-        # Revenue
-        total_revenue = Order.objects.aggregate(
-            total=Sum("total_amount")
-        )["total"] or 0
+        total_revenue = Order.objects.aggregate(total=Sum("total_amount"))["total"] or 0
 
-        # Recent Orders
         recent_orders = (
             Order.objects.select_related("user", "event")
             .order_by("-created_at")[:5]
             .values(
                 "id",
-                "user__username",
+                "user__email",
                 "event__title",
                 "total_amount",
-                "created_at"
+                "created_at",
             )
         )
 
-        # Recent Events
         recent_events = (
             Event.objects.order_by("-created_at")[:5]
             .values("id", "title", "date", "location")
         )
 
-        # Top events by ticket sales
         top_events = (
             Order.objects.values("event__title")
             .annotate(total_sales=Count("id"))
             .order_by("-total_sales")[:5]
         )
 
-        # Orders in the last 7 days
         last_7_days = timezone.now() - timedelta(days=7)
 
         weekly_orders = (
             Order.objects.filter(created_at__gte=last_7_days)
-            .extra(select={'day': "date(created_at)"})
+            .extra(select={"day": "date(created_at)"})
             .values("day")
             .annotate(total=Count("id"))
             .order_by("day")
@@ -111,7 +139,6 @@ class AdminDashboardView(APIView):
                 "total_orders": total_orders,
                 "total_revenue": total_revenue,
             },
-
             "recent_orders": list(recent_orders),
             "recent_events": list(recent_events),
             "top_events": list(top_events),

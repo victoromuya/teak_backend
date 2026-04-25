@@ -106,7 +106,7 @@ class UserProfileView(APIView):
         return Response(serializer.data)
 
 @extend_schema(
-    tags=["auth"],
+    tags=["Auth"],
     description="Request Password Reset link",
     request=PasswordResetRequestSerializer,
     responses={200: None}
@@ -124,7 +124,7 @@ class PasswordResetRequestView(APIView):
         return Response(serializer.errors, status=400)
 
 @extend_schema(
-    tags=["auth"],
+    tags=["Auth"],
     description="Confirm Password Reset",
     request=PasswordResetConfirmSerializer,
     responses={200: None}
@@ -142,7 +142,7 @@ class PasswordResetConfirmView(APIView):
         return Response(serializer.errors, status=400)
 
 @extend_schema(
-    tags=["auth"],
+    tags=["Auth"],
     description="Request email verification link",
     request=EmailVerificationRequestSerializer,
     responses={200: None}

@@ -1,9 +1,16 @@
 from django.urls import path
-
-from .views import AdminDashboardView, AdminUserViewSet, AdminEventViewSet,\
-    AdminTicketViewSet, AdminOrderViewSet, AdminTicketTypeViewSet
-
 from rest_framework.routers import DefaultRouter
+
+from .views import (
+    AdminAuthMeView,
+    AdminDashboardView,
+    AdminEventViewSet,
+    AdminLoginView,
+    AdminOrderViewSet,
+    AdminTicketTypeViewSet,
+    AdminTicketViewSet,
+    AdminUserViewSet,
+)
 
 
 router = DefaultRouter()
@@ -17,5 +24,7 @@ router.register("ticketype", AdminTicketTypeViewSet)
 urlpatterns = router.urls
 
 urlpatterns += [
+    path("auth/login/", AdminLoginView.as_view()),
+    path("auth/me/", AdminAuthMeView.as_view()),
     path("dashboard/", AdminDashboardView.as_view()),
 ]
