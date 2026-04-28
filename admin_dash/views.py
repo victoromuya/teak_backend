@@ -112,7 +112,7 @@ class AdminDashboardView(APIView):
 
         recent_events = (
             Event.objects.order_by("-created_at")[:5]
-            .values("id", "title", "date", "location")
+            .values("id", "title", "created_at", "address", "start_date", "end_date")
         )
 
         top_events = (
@@ -122,9 +122,18 @@ class AdminDashboardView(APIView):
         )
 
         last_7_days = timezone.now() - timedelta(days=7)
+        last_30_days = timezone.now() - timedelta(days=30)
 
         weekly_orders = (
             Order.objects.filter(created_at__gte=last_7_days)
+            .extra(select={"day": "date(created_at)"})
+            .values("day")
+            .annotate(total=Count("id"))
+            .order_by("day")
+        )
+
+        monthly_orders = (
+            Order.objects.filter(created_at__gte=last_30_days)
             .extra(select={"day": "date(created_at)"})
             .values("day")
             .annotate(total=Count("id"))
@@ -143,6 +152,7 @@ class AdminDashboardView(APIView):
             "recent_events": list(recent_events),
             "top_events": list(top_events),
             "weekly_orders": list(weekly_orders),
+            "monthly_orders": list(monthly_orders),
         }
 
         return Response(data)
