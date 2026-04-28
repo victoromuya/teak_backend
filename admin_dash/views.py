@@ -67,6 +67,9 @@ class AdminEventViewSet(ModelViewSet):
     serializer_class = EventSerializer
     permission_classes = [IsAuthenticated, IsAdmin]
 
+    def perform_create(self, serializer):
+        serializer.save(organizer=self.request.user)
+
 
 class AdminOrderViewSet(ModelViewSet):
     queryset = Order.objects.all()
