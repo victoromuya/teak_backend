@@ -2,6 +2,7 @@
 
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
+from django.http import Http404
 from .permissions import CanDeleteEvent, IsOrganizer, IsOrganizerOrAdmin
 from .models import Event, TicketType
 from .serializers import EventSerializer, TicketTypeSerializer
