@@ -253,8 +253,8 @@ STATIC_URL = '/static/'
 
 CLOUDINARY_STORAGE = {
     'CLOUD_NAME':'ducy4bo9m',
-    'API_KEY': '487878137748459',
-    'API_SECRET':'HKoNODviT-23civeAu-j49nJrQk'
+    'API_KEY':os.getenv("CLOUDSTORE_API_KEY"),
+    'API_SECRET': os.getenv("CLOUDSTORE_API_SECRET")
 }
 
 # Set the default file storage
