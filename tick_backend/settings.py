@@ -32,7 +32,9 @@ INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
-    'django.contrib.staticfiles',
+    'cloudinary_storage',
+    'django.contrib.staticfiles', # Must be below cloudinary_storage
+    'cloudinary',
     'rest_framework',
     'rest_framework.authtoken',
     'rest_framework_simplejwt',
@@ -238,3 +240,14 @@ MEDIA_ROOT = os.path.join(BASE_DIR, "media")
 MEDIA_URL = "/media/"
 
 STATIC_URL = '/static/'
+
+
+CLOUDINARY_STORAGE = {
+    'CLOUD_NAME':'ducy4bo9m',
+    'API_KEY': '487878137748459',
+    'API_SECRET':'HKoNODviT-23civeAu-j49nJrQk'
+}
+
+# Set the default file storage
+#if not DEBUG: # If on Vercel/Production
+DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
