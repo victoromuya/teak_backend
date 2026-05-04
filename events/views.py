@@ -47,7 +47,7 @@ class EventViewSet(ModelViewSet):
 
         # Organizer sees only their events
         if user.is_authenticated and user.is_organizer:
-            return Event.objects.filter(organizer=user)
+            return Event.objects.filter(organizer=user, is_active=True)
 
         # Public users see only active events
         return Event.objects.filter(is_active=True)
