@@ -70,7 +70,7 @@ class TicketTypeViewSet(ModelViewSet):
 
     queryset = TicketType.objects.all()
     serializer_class = TicketTypeSerializer
-    permission_classes = [IsAuthenticated, IsOrganizer]
+    permission_classes = [IsAuthenticatedOrReadOnly]
 
     # def get_queryset(self):
     #     return TicketType.objects.filter(
