@@ -72,6 +72,16 @@ class TicketTypeViewSet(ModelViewSet):
     serializer_class = TicketTypeSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
 
+    def get_permissions(self):
+        # Anyone can view
+        if self.action == "create":
+            return [IsOrganizerOrAdmin()]
+
+        if self.action in ["update", "partial_update", "destroy"]:
+            return [IsAuthenticated(), CanDeleteEvent()]
+
+        return []
+
     # def get_queryset(self):
     #     return TicketType.objects.filter(
     #         event__organizer=self.request.user

@@ -99,11 +99,30 @@ class UserProfileView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if request.user.is_organizer:
-            return Response({"error": "Organizer cannot use this endpoint"}, status=403)
-
         serializer = UserSerializer(request.user)
-        return Response(serializer.data)
+        total_tickets_purchased = Order.objects.filter(
+            user=request.user,
+            status="paid"  # if you track payment status
+        ).aggregate(total=Count('id'))['total'] or 0
+
+        return Response({
+            "user": serializer.data,
+            "stats": {
+                "total_tickets": total_tickets_purchased,
+            }
+        })
+    
+
+    def put(self, request):
+
+        serializer = UserSerializer(request.user, data=request.data, partial=True)
+
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        
+        return Response(serializer.errors, status=400)
+
 
 @extend_schema(
     tags=["auth"],
