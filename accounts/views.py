@@ -100,7 +100,7 @@ class UserProfileView(APIView):
 
     def get(self, request):
         serializer = UserSerializer(request.user)
-        total_tickets_purchased = Order.objects.filter(
+        user_orders = Order.objects.filter(
             user=request.user,
             status="paid"  # if you track payment status
         ).aggregate(total=Count('id'))['total'] or 0
@@ -108,7 +108,7 @@ class UserProfileView(APIView):
         return Response({
             "user": serializer.data,
             "stats": {
-                "total_tickets": total_tickets_purchased,
+                "total_orders": user_orders,
             }
         })
     

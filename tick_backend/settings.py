@@ -23,7 +23,7 @@ DEBUG = os.getenv("DEBUG") == "True"
 
 ALLOWED_HOSTS = ["teak-backend.onrender.com", "127.0.0.1", 
                  "teak-backend.vercel.app", 
-                 "localhost:8000", "http://localhost:8000"]
+                 "localhost:8000", "http://localhost:8000", "localhost"]
 
 # Application definition
 INSTALLED_APPS = [
