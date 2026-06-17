@@ -2,7 +2,10 @@
 
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
+from rest_framework.decorators import action
+from rest_framework.response import Response
 from django.http import Http404
+from django.conf import settings
 from .permissions import CanDeleteEvent, IsOrganizer, IsOrganizerOrAdmin
 from .models import Event, TicketType
 from .serializers import EventSerializer, TicketTypeSerializer
@@ -60,6 +63,19 @@ class EventViewSet(ModelViewSet):
             if not obj.is_active:
                 raise Http404("Event not found")
         return obj
+
+    @extend_schema(
+        tags=["Events"],
+        description="Generate event link"
+    )
+    @action(detail=True, methods=['get'])
+    def link(self, request, pk=None):
+        event = self.get_object()
+        # Construct frontend URL for event detail
+        # Assuming frontend route: /events/{id}
+        frontend_url = settings.FRONTEND_URL.rstrip('/') if settings.FRONTEND_URL else ''
+        event_link = f"{frontend_url}/event/{event.id}"
+        return Response({'event_link': event_link})
 
 
 @extend_schema(
