@@ -1,5 +1,6 @@
 import requests
 from django.conf import settings
+from django.shortcuts import redirect
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -89,6 +90,13 @@ class OrderViewSet(ModelViewSet):
             "payment_url": data["data"]["authorization_url"],
             "reference": order.reference
         })
+    
+
+    @action(detail=False, methods=['get'])
+    def pending(self, request):
+        queryset = self.get_queryset().filter(status='pending')
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
 
 @extend_schema(
@@ -97,8 +105,17 @@ class OrderViewSet(ModelViewSet):
     responses={200: None}
 )
 @api_view(["GET"])
-@permission_classes([IsAuthenticated])   # Paystack redirects without auth
-def verify_payment(request, reference):
+@permission_classes([])   # Allow any - Paystack redirects without auth
+def verify_payment(request, reference=None):
+
+    # Get reference from query params (for Paystack callback) or URL kwargs (for backward compatibility)
+    if reference is None:
+        reference = request.GET.get('reference')
+    if not reference:
+        return Response(
+            {"error": "Reference not provided"},
+            status=400
+        )
 
     # 1️⃣ Get Order
     try:
@@ -193,7 +210,7 @@ def verify_payment(request, reference):
         order.status = "paid"
         order.verified_at = timezone.now()
         order.save(update_fields=["status", "verified_at"])
-   
+
         tickets = generate_tickets(order)
 
         # Prepare ticket data for the frontend
@@ -208,6 +225,23 @@ def verify_payment(request, reference):
         "order_reference": order.reference,
         "tickets": ticket_data
     })
+
+
+@api_view(["GET"])
+@permission_classes([])   # Allow any - redirect from Paystack
+def payment_success(request):
+    """
+    Redirect to payment verification endpoint with reference from query params.
+    Paystack redirects to this URL with ?trxref=XXX&reference=YYY
+    """
+    reference = request.GET.get('reference')
+    if not reference:
+        return Response(
+            {"error": "Reference not provided"},
+            status=400
+        )
+    # Redirect to verification endpoint with reference as query parameter
+    return redirect(f'/api/orders/verify/?reference={reference}')
 
 
 
