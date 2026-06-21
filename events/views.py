@@ -36,7 +36,7 @@ class EventViewSet(ModelViewSet):
         # if self.action == "create":
         #     return [IsOrganizerOrAdmin()]
 
-    
+
 
     def perform_create(self, serializer):
         serializer.save(organizer=self.request.user)
@@ -76,6 +76,24 @@ class EventViewSet(ModelViewSet):
         frontend_url = settings.FRONTEND_URL.rstrip('/') if settings.FRONTEND_URL else ''
         event_link = f"{frontend_url}/event/{event.id}"
         return Response({'event_link': event_link})
+
+    @extend_schema(
+        tags=["Events"],
+        description="List events created by the logged-in user"
+    )
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    def my_events(self, request):
+        user = request.user
+        # Filter events where the user is the organizer
+        queryset = Event.objects.filter(organizer=user)
+        # Optionally, we can also filter by is_active? The requirement didn't specify.
+        # We'll return all events created by the user regardless of active status.
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
 
 @extend_schema(
