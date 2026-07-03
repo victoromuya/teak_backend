@@ -10,97 +10,91 @@ from .permissions import CanDeleteEvent, IsOrganizer, IsOrganizerOrAdmin
 from .models import Event, TicketType
 from .serializers import EventSerializer, TicketTypeSerializer
 from drf_spectacular.utils import extend_schema
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 
 @extend_schema(
     tags=["Events"],
-    description="Manage events",
-    parameters=[
-        OpenApiParameter(
-            name="mine",
-            type=OpenApiTypes.BOOL,
-            location=OpenApiParameter.QUERY,
-            description="If true, returns only events created by the authenticated user."
-        )
-    ]
+    description="List all events"
 )
 class EventViewSet(ModelViewSet):
     queryset = Event.objects.all()
     serializer_class = EventSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
 
+    # Only restrict UPDATE & DELETE
     def get_permissions(self):
-        # Create
+        # Anyone can view
         if self.action == "create":
             return [IsOrganizerOrAdmin()]
 
-        # Update/Delete
         if self.action in ["update", "partial_update", "destroy"]:
             return [IsAuthenticated(), CanDeleteEvent()]
 
-        # Read
-        return []
+        return []  # No permissions required for read
+        # return [IsAuthenticatedOrReadOnly()]
+
+        # CREATE event
+        # if self.action == "create":
+        #     return [IsOrganizerOrAdmin()]
+
+
 
     def perform_create(self, serializer):
         serializer.save(organizer=self.request.user)
 
     def get_queryset(self):
         user = self.request.user
-        queryset = Event.objects.all()
 
-        # Admin sees everything
+        # Admin sees all
         if user.is_staff:
-            return queryset
+            return Event.objects.all()
 
-        # Logged-in organizer requesting only their events
-        if (
-            user.is_authenticated
-            and self.request.query_params.get("mine") == "true"
-        ):
-            return queryset.filter(organizer=user)
-
-        # Organizer (default)
+        # Organizer sees only their events
         if user.is_authenticated and user.is_organizer:
-            return queryset.filter(is_active=True)
+            return Event.objects.filter(organizer=user)
 
-        # Public users
-        return queryset.filter(is_active=True)
+        # Public users see only active events
+        return Event.objects.filter(is_active=True)
 
     def get_object(self):
         obj = super().get_object()
         user = self.request.user
 
-        # Admin can access everything
-        if user.is_staff:
-            return obj
-
-        # Organizer can access their own events (active or inactive)
-        if user.is_authenticated and obj.organizer == user:
-            return obj
-
-        # Public cannot access inactive events
-        if not obj.is_active:
-            raise Http404("Event not found")
-
+        if not user.is_authenticated or not user.is_staff:
+            if not obj.is_active:
+                raise Http404("Event not found")
         return obj
 
     @extend_schema(
         tags=["Events"],
         description="Generate event link"
     )
-    @action(detail=True, methods=["get"])
+    @action(detail=True, methods=['get'])
     def link(self, request, pk=None):
         event = self.get_object()
-
-        frontend_url = (
-            settings.FRONTEND_URL.rstrip("/")
-            if settings.FRONTEND_URL
-            else ""
-        )
-
+        # Construct frontend URL for event detail
+        # Assuming frontend route: /events/{id}
+        frontend_url = settings.FRONTEND_URL.rstrip('/') if settings.FRONTEND_URL else ''
         event_link = f"{frontend_url}/event/{event.id}"
+        return Response({'event_link': event_link})
 
-        return Response({"event_link": event_link})
+    @extend_schema(
+        tags=["Events"],
+        description="List events created by the logged-in user"
+    )
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    def my_events(self, request):
+        user = request.user
+        # Filter events where the user is the organizer
+        queryset = Event.objects.filter(organizer=user)
+        # Optionally, we can also filter by is_active? The requirement didn't specify.
+        # We'll return all events created by the user regardless of active status.
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
 
 @extend_schema(
     tags=["Events"],
