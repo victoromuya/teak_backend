@@ -44,11 +44,11 @@ class EventViewSet(ModelViewSet):
     def get_queryset(self):
         user = self.request.user
 
-        # Admin sees all
+        # Admin sees everything
         if user.is_staff:
             return Event.objects.all()
 
-        # Organizer sees only their events
+        # Organizer sees all of their events (active and inactive)
         if user.is_authenticated and user.is_organizer:
             return Event.objects.filter(organizer=user)
 
@@ -59,9 +59,18 @@ class EventViewSet(ModelViewSet):
         obj = super().get_object()
         user = self.request.user
 
-        if not user.is_authenticated or not user.is_staff:
-            if not obj.is_active:
-                raise Http404("Event not found")
+        # Admin can access everything
+        if user.is_staff:
+            return obj
+
+        # Organizer can access their own events (active or inactive)
+        if user.is_authenticated and obj.organizer == user:
+            return obj
+
+        # Everyone else can only access active events
+        if not obj.is_active:
+            raise Http404("Event not found")
+
         return obj
 
     @extend_schema(
