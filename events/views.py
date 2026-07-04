@@ -103,6 +103,25 @@ class EventViewSet(ModelViewSet):
             return self.get_paginated_response(serializer)
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
+    
+
+    @extend_schema(
+        tags=["Events"],
+        description="List all ticket types for a specific event",
+        responses=TicketTypeSerializer(many=True),
+    )
+    @action(detail=True, methods=["get"])
+    def tickets(self, request, pk=None):
+        event = self.get_object()
+        queryset = TicketType.objects.filter(event=event)
+
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = TicketTypeSerializer(page, many=True)
+            return self.get_paginated_response(serializer)
+
+        serializer = TicketTypeSerializer(queryset, many=True)
+        return Response(serializer.data)
 
 
 @extend_schema(
@@ -123,7 +142,11 @@ class TicketTypeViewSet(ModelViewSet):
         if self.action in ["update", "partial_update", "destroy"]:
             return [IsAuthenticated(), CanDeleteEvent()]
 
+
         return []
+
+
+
 
     # def get_queryset(self):
     #     return TicketType.objects.filter(
