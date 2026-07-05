@@ -8,8 +8,15 @@ from django.http import Http404
 from django.conf import settings
 from .permissions import CanDeleteEvent, IsOrganizer, IsOrganizerOrAdmin
 from .models import Event, TicketType
-from .serializers import EventSerializer, TicketTypeSerializer
+from .serializers import EventSerializer, TicketTypeSerializer, SoldTicketSerializer
 from drf_spectacular.utils import extend_schema
+
+from rest_framework import status
+
+from orders.models import Ticket
+from orders.serializers import TicketScanSerializer
+from orders.permissions import CanScanTicket
+from django.utils import timezone
 
 @extend_schema(
     tags=["Events"],
@@ -72,7 +79,35 @@ class EventViewSet(ModelViewSet):
             raise Http404("Event not found")
 
         return obj
+    
+    # ===================================
+    # SEE ALL SOLD TICKETS FOR AN EVENT
+    # ==================================
+    @action(
+    detail=True,
+    methods=["get"],
+    url_path="sold-tickets",
+    permission_classes=[CanScanTicket],
+)
+    def sold_tickets(self, request, pk=None):
+        event = self.get_object()
+        self.check_object_permissions(request, event)
 
+        tickets = Ticket.objects.filter(
+            order__event=event,
+            order__status="paid"
+        ).select_related(
+            "order__user",
+            "ticket_type"
+        )
+
+        serializer = SoldTicketSerializer(tickets, many=True)
+        return Response(serializer.data)
+
+
+ # ===================================
+    # GENERATE EVENT LINK
+    # ==================================
     @extend_schema(
         tags=["Events"],
         description="Generate event link"
@@ -104,7 +139,9 @@ class EventViewSet(ModelViewSet):
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
     
-
+     # ===================================
+    # LIST ALL TICKET TYPES FOR AN EVENT
+    # ==================================
     @extend_schema(
         tags=["Events"],
         description="List all ticket types for a specific event",
@@ -122,6 +159,106 @@ class EventViewSet(ModelViewSet):
 
         serializer = TicketTypeSerializer(queryset, many=True)
         return Response(serializer.data)
+    
+
+ # ===================================
+    # SCAN A TICKET FOR AN EVENT
+    # ==================================
+
+    @extend_schema(
+    tags=["Events"],
+    description="Scan a ticket for this event",
+    request=TicketScanSerializer,
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="scan-ticket",
+        permission_classes=[CanScanTicket],
+    )
+    def scan_ticket(self, request, pk=None):
+
+        event = self.get_object()
+
+        # First, ensure the user owns this event (unless admin)
+        if not request.user.is_staff and event.organizer != request.user:
+            return Response(
+                {
+                    "success": False,
+                    "message": "You are not authorized to scan tickets for this event."
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        serializer = TicketScanSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        ticket_code = serializer.validated_data["ticket_code"]
+
+        try:
+            ticket = Ticket.objects.select_related(
+                "order",
+                "order__user",
+                "ticket_type"
+            ).get(ticket_code=ticket_code)
+
+        except Ticket.DoesNotExist:
+            return Response(
+                {
+                    "success": False,
+                    "message": "Ticket not found."
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Ensure the ticket belongs to this event
+        if ticket.order.event != event:
+            return Response(
+                {
+                    "success": False,
+                    "message": "This ticket does not belong to this event."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Ensure payment is completed
+        if ticket.order.status != "paid":
+            return Response(
+                {
+                    "success": False,
+                    "message": "This ticket has not been paid for."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Ensure ticket hasn't already been used
+        if ticket.is_used:
+            return Response(
+                {
+                    "success": False,
+                    "message": "Ticket has already been scanned."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        ticket.is_used = True
+        ticket.scanned_at = timezone.now()
+        ticket.scanned_by = request.user
+        ticket.save()
+
+        return Response(
+            {
+                "success": True,
+                "message": "Ticket verified successfully.",
+                "ticket": {
+                    "ticket_code": str(ticket.ticket_code),
+                    "attendee": ticket.order.user.get_full_name(),
+                    "email": ticket.order.user.email,
+                    "ticket_type": ticket.ticket_type.name,
+                    "scanned_at": ticket.scanned_at,
+                }
+            }
+        )
 
 
 @extend_schema(

@@ -16,7 +16,7 @@ from datetime import timedelta
 from django.core.files import File
 from io import BytesIO
 import qrcode
-
+from rest_framework import status
 from django.core.mail import EmailMultiAlternatives
 from email.mime.image import MIMEImage
 from drf_spectacular.utils import extend_schema, OpenApiExample
@@ -66,9 +66,66 @@ class OrderViewSet(ModelViewSet):
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+
         order = serializer.save()
 
-        # Initialize Paystack
+        # ==========================
+        # FREE EVENT / FREE TICKETS
+        # ==========================
+        if order.total_amount == 0:
+
+            with transaction.atomic():
+
+                order_items = order.items.select_related(
+                    "ticket_type"
+                ).select_for_update()
+
+                # Reduce ticket stock
+                for item in order_items:
+
+                    ticket_type = item.ticket_type
+
+                    if ticket_type.remaining < item.quantity:
+                        return Response(
+                            {
+                                "error": f"Insufficient tickets for {ticket_type.name}"
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+
+                    ticket_type.remaining -= item.quantity
+                    ticket_type.save(update_fields=["remaining"])
+
+                # Mark order as completed
+                order.status = "paid"
+                order.verified_at = timezone.now()
+                order.save(update_fields=["status", "verified_at"])
+
+                # Generate QR tickets
+                tickets = generate_tickets(order)
+
+            ticket_data = [
+                {
+                    "ticket_code": ticket.ticket_code,
+                    "qr_code_url": request.build_absolute_uri(ticket.qr_image.url),
+                    "ticket_type": ticket.ticket_type.name,
+                }
+                for ticket in tickets
+            ]
+
+            return Response(
+                {
+                    "message": "Free ticket booked successfully.",
+                    "order_reference": order.reference,
+                    "tickets": ticket_data,
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
+        # ==========================
+        # PAID EVENT
+        # ==========================
+
         response = requests.post(
             "https://api.paystack.co/transaction/initialize",
             headers={
@@ -76,7 +133,7 @@ class OrderViewSet(ModelViewSet):
                 "Content-Type": "application/json",
             },
             json={
-                "email": request.user.email, 
+                "email": request.user.email,
                 "amount": int(order.total_amount * 100),
                 "reference": order.reference,
                 "callback_url": settings.PAYSTACK_CALLBACK_URL,
@@ -85,11 +142,23 @@ class OrderViewSet(ModelViewSet):
 
         data = response.json()
 
-        return Response({
-            "order_id": order.id,
-            "payment_url": data["data"]["authorization_url"],
-            "reference": order.reference
-        })
+        if not data.get("status"):
+            return Response(
+                {
+                    "error": "Unable to initialize payment.",
+                    "details": data.get("message"),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            {
+                "order_id": order.id,
+                "payment_url": data["data"]["authorization_url"],
+                "reference": order.reference,
+            },
+            status=status.HTTP_201_CREATED,
+        )
     
 
     @action(detail=False, methods=['get'])
@@ -272,8 +341,6 @@ def generate_tickets(order):
 
     send_ticket_email(order)
     return generated_tickets
-
-
 
 
 

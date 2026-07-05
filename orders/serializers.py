@@ -79,3 +79,8 @@ class OrderCreateSerializer(serializers.Serializer):
                 )
 
             return order
+        
+
+
+class TicketScanSerializer(serializers.Serializer):
+    ticket_code = serializers.UUIDField()

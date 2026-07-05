@@ -42,6 +42,10 @@ class OrderItem(models.Model):
 
 
 
+# orders/models.py
+
+from django.conf import settings
+
 class Ticket(models.Model):
 
     order = models.ForeignKey(Order, on_delete=models.CASCADE)
@@ -52,10 +56,33 @@ class Ticket(models.Model):
         default=1,
     )
 
-    ticket_code = models.UUIDField(default=uuid.uuid4,editable=False,unique=True,db_index=True)
+    ticket_code = models.UUIDField(
+        default=uuid.uuid4,
+        editable=False,
+        unique=True,
+        db_index=True
+    )
+
     qr_image = models.ImageField(upload_to="ticketQR/")
+
     is_used = models.BooleanField(default=False)
+
+    scanned_at = models.DateTimeField(
+        null=True,
+        blank=True
+    )
+
+    scanned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="scanned_tickets"
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        db_table = 'Tickets'
+        db_table = "Tickets"
+
+

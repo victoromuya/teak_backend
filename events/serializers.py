@@ -1,7 +1,7 @@
 # events/serializers.py
 from rest_framework import serializers
 from .models import TicketType, Event
-
+from orders.models import Ticket
 # events/serializers.py
 
 class EventSerializer(serializers.ModelSerializer):
@@ -45,4 +45,30 @@ class TicketTypeSerializer(serializers.ModelSerializer):
         validated_data['remaining'] = validated_data['quantity']
         return super().create(validated_data)
 
+
+
+class SoldTicketSerializer(serializers.ModelSerializer):
+    attendee = serializers.SerializerMethodField()
+    email = serializers.EmailField(source="order.user.email", read_only=True)
+    ticket_type = serializers.CharField(source="ticket_type.name", read_only=True)
+    order_reference = serializers.CharField(source="order.reference", read_only=True)
+    payment_status = serializers.CharField(source="order.status", read_only=True)
+
+    class Meta:
+        model = Ticket
+        fields = [
+            "id",
+            "ticket_code",
+            "ticket_type",
+            "attendee",
+            "email",
+            "order_reference",
+            "payment_status",
+            "is_used",
+            "scanned_at",
+            "created_at",
+        ]
+
     
+    def get_attendee(self, obj):
+        return obj.order.user.get_full_name() or obj.order.user.email
