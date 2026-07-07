@@ -50,3 +50,23 @@ class IsOrganizerOrAdmin(BasePermission):
             return True
 
         return False
+    
+
+
+
+class CanManageTicketType(BasePermission):
+    """
+    Admin can manage any ticket type.
+    Organizer can only manage ticket types
+    belonging to their own events.
+    """
+
+    def has_object_permission(self, request, view, obj):
+
+        if request.user.is_staff:
+            return True
+
+        return (
+            request.user.is_authenticated
+            and obj.event.organizer == request.user
+        )

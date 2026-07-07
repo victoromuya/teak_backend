@@ -1,12 +1,12 @@
 # events/views.py
 
 from rest_framework.viewsets import ModelViewSet
-from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
+from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly, AllowAny
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.http import Http404
 from django.conf import settings
-from .permissions import CanDeleteEvent, IsOrganizer, IsOrganizerOrAdmin
+from .permissions import CanDeleteEvent, IsOrganizer, IsOrganizerOrAdmin, CanManageTicketType
 from .models import Event, TicketType
 from .serializers import EventSerializer, TicketTypeSerializer, SoldTicketSerializer
 from drf_spectacular.utils import extend_schema
@@ -27,40 +27,33 @@ class EventViewSet(ModelViewSet):
     serializer_class = EventSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
 
-    # Only restrict UPDATE & DELETE
+    def get_queryset(self):
+        user = self.request.user
+
+        queryset = Event.objects.all()
+
+        # Admin sees everything
+        if user.is_authenticated and user.is_staff:
+            return queryset
+
+        # Everyone else (public and logged-in users)
+        # sees all active events
+        return queryset.filter(is_active=True)
+
+
+    def perform_create(self, serializer):
+        serializer.save(organizer=self.request.user)
+
     def get_permissions(self):
-        # Anyone can view
+
         if self.action == "create":
             return [IsOrganizerOrAdmin()]
 
         if self.action in ["update", "partial_update", "destroy"]:
             return [IsAuthenticated(), CanDeleteEvent()]
 
-        return []  # No permissions required for read
-        # return [IsAuthenticatedOrReadOnly()]
+        return []
 
-        # CREATE event
-        # if self.action == "create":
-        #     return [IsOrganizerOrAdmin()]
-
-
-
-    def perform_create(self, serializer):
-        serializer.save(organizer=self.request.user)
-
-    def get_queryset(self):
-        user = self.request.user
-
-        # Admin sees everything
-        if user.is_staff:
-            return Event.objects.all()
-
-        # Organizer sees all of their events (active and inactive)
-        if user.is_authenticated and user.is_organizer:
-            return Event.objects.filter(organizer=user)
-
-        # Public users see only active events
-        return Event.objects.filter(is_active=True)
 
     def get_object(self):
         obj = super().get_object()
@@ -105,7 +98,7 @@ class EventViewSet(ModelViewSet):
         return Response(serializer.data)
 
 
- # ===================================
+    # ===================================
     # GENERATE EVENT LINK
     # ==================================
     @extend_schema(
@@ -125,6 +118,10 @@ class EventViewSet(ModelViewSet):
         tags=["Events"],
         description="List events created by the logged-in user"
     )
+
+    # ===================================
+    # MY EVENTS 
+    # ===================================
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def my_events(self, request):
         user = request.user
@@ -272,15 +269,14 @@ class TicketTypeViewSet(ModelViewSet):
     permission_classes = [IsAuthenticatedOrReadOnly]
 
     def get_permissions(self):
-        # Anyone can view
+
         if self.action == "create":
             return [IsOrganizerOrAdmin()]
 
         if self.action in ["update", "partial_update", "destroy"]:
-            return [IsAuthenticated(), CanDeleteEvent()]
+            return [IsAuthenticated(), CanManageTicketType()]
 
-
-        return []
+        return [[AllowAny()]]
 
 
 
