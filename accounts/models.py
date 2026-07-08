@@ -2,6 +2,8 @@
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
 from django.utils import timezone
+import random
+
 
 
 # class User(AbstractUser):
@@ -56,5 +58,48 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     class Meta:
         verbose_name = "user"
         verbose_name_plural = "users"
+
+
+
+
+class EmailOTP(models.Model):
+
+    PURPOSE_CHOICES = (
+        ("registration", "Registration"),
+        ("guest_checkout", "Guest Checkout"),
+        ("login", "Login"),
+        ("password_reset", "Password Reset"),
+        ("email_change", "Email Change"),
+    )
+
+    email = models.EmailField(db_index=True)
+    otp = models.CharField(max_length=300)
+    first_name = models.CharField(max_length=150, blank=True)
+    last_name = models.CharField(max_length=150, blank=True)
+    purpose = models.CharField(
+        max_length=30,
+        choices=PURPOSE_CHOICES,
+        default="registration",
+    )
+
+    is_used = models.BooleanField(default=False)
+
+    expires_at = models.DateTimeField()
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "EmailOTPs"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.email} - {self.purpose}"
+
+    def is_expired(self):
+        return timezone.now() > self.expires_at
+
+    @staticmethod
+    def generate_otp():
+        return str(random.randint(100000, 999999))
 
 

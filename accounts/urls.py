@@ -2,7 +2,7 @@ from django.urls import path
 
 from .views import RegisterView, UserProfileView, OrganizerProfileView, \
     PasswordResetRequestView, PasswordResetConfirmView, \
-        VerifyEmailView, EmailVerificationRequestView
+        VerifyEmailView, EmailVerificationRequestView, check_email
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
@@ -23,6 +23,11 @@ urlpatterns = [
     path("password-reset/confirm/", PasswordResetConfirmView.as_view()),
     path("email-verification/", EmailVerificationRequestView.as_view()),
     path("verify-email/", VerifyEmailView.as_view()),
+     path(
+        "check-email/",
+        check_email,
+        name="check-email",
+    ),
 
     # path("admin/users/", AdminUsersView.as_view()),
     

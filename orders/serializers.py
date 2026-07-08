@@ -51,7 +51,7 @@ class OrderCreateSerializer(serializers.Serializer):
             for item in items_data:
                 ticket = ticket_map[item["ticket_type"]]
 
-                if item["quantity"] > ticket.quantity:
+                if item["quantity"] > ticket.remaining:
                     raise serializers.ValidationError(
                         f"Not enough stock for {ticket.name}"
                     )

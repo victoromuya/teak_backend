@@ -13,8 +13,19 @@ from .utils.email_tokens import generate_email_verification_token
 from django.contrib.auth import authenticate
 from django.contrib.auth import get_user_model
 from glob_utils.send_email import send_email
+from .models import CustomUser, EmailOTP
+from django.contrib.auth.hashers import make_password, check_password
+from django.utils import timezone
+from datetime import timedelta
+import random
 
 User = get_user_model()
+
+
+
+class EmailCheckSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
 
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
@@ -171,28 +182,61 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 
 class EmailVerificationRequestSerializer(serializers.Serializer):
     email = serializers.EmailField()
+    purpose=serializers.CharField()
+    first_name = serializers.CharField()
+    last_name=serializers.CharField()
 
     def validate(self, data):
-        try:
-            user = User.objects.get(email=data["email"])
-        except User.DoesNotExist:
-            return data  # Do not reveal if user exists
+        email = data["email"].lower()
+        purpose=data['purpose'].lower()
+        first_name=data["first_name"].lower()
+        last_name=data["last_name"].lower()
 
-        if user.is_email_verified:
+        # Don't reveal whether the email exists
+        user = CustomUser.objects.filter(email=email).first()
+
+        if user and user.is_email_verified:
             return data
 
-        token = generate_email_verification_token(user)
-        
-        verification_link = f"{settings.FRONTEND_URL}/api/auth/verify-email?token={token}"
-        print(verification_link)
-        # Send email
-        # send_mail(
-        #     subject="Verify your email",
-        #     message=f"Click the link to verify your email: {verification_link}",
-        #     from_email=settings.EMAIL_HOST_USER,
-        #     recipient_list=[user.email],
-        # )
+        # Generate a 6-digit OTP
+        otp = f"{random.randint(100000, 999999)}"
+       
 
-        send_email("Verify your email", f"Click the link to verify your email: {verification_link}", user.email)
+        # Remove any previous registration OTPs
+        EmailOTP.objects.filter(
+            email=email,
+            purpose=purpose
+        ).delete()
+
+        plain_otp = EmailOTP.generate_otp()
+        print(plain_otp)
+        # Save new OTP
+        EmailOTP.objects.create(
+            email=email,
+            otp=make_password(plain_otp),
+            first_name=first_name,
+            last_name=last_name,
+            purpose=purpose,
+            expires_at=timezone.now() + timedelta(minutes=10),
+        )
+
+        # Send email
+        send_email(
+            subject="Verify your email",
+            body=f"Your verification code is {plain_otp}. It expires in 10 minutes.",
+            to_email=[email,],
+        )
 
         return data
+    
+
+
+class VerifyEmailOTPSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    otp = serializers.CharField(max_length=6)
+    purpose = serializers.ChoiceField(
+        choices=[
+            ("registration", "Registration"),
+            ("guest_checkout", "Guest Checkout"),
+        ]
+    )

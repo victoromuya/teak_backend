@@ -9,6 +9,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.db.models import Sum, Count
 
+from django.contrib.auth.hashers import make_password, check_password
+
 from django.utils import timezone
 from datetime import timedelta
 from django.contrib.auth import get_user_model
@@ -18,13 +20,21 @@ from .utils.email_tokens import verify_email_token
 from .serializers import (
     LoginSerializer,
     PasswordResetRequestSerializer,
-    PasswordResetConfirmSerializer
+    PasswordResetConfirmSerializer, EmailCheckSerializer, VerifyEmailOTPSerializer
 )
+
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+
+from .models import CustomUser, EmailOTP
+
 
 from drf_spectacular.utils import extend_schema
 from rest_framework_simplejwt.views import TokenObtainPairView
 from events.models import Event
 from orders.models import Order 
+from rest_framework_simplejwt.tokens import RefreshToken
 
 
 User = get_user_model()
@@ -168,35 +178,161 @@ class PasswordResetConfirmView(APIView):
 )
 class EmailVerificationRequestView(APIView):
 
+    permission_classes = []
+
     def post(self, request):
-        serializer = EmailVerificationRequestSerializer(data=request.data)
-        if serializer.is_valid():
-            return Response({"message": "If the email exists, a verification link was sent."}, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer = EmailVerificationRequestSerializer(
+            data=request.data
+        )
+
+        serializer.is_valid(raise_exception=True)
+
+        return Response(
+            {
+                "message": "If the email can be verified, a verification code has been sent."
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
+@extend_schema(
+    tags=["auth"],
+    description="Verify OTP",
+    request=VerifyEmailOTPSerializer,
+    responses={200: None}
+)
 class VerifyEmailView(APIView):
 
+    permission_classes = []
+
     def post(self, request):
-        token = request.data.get("token")
-        if not token:
-            return Response({"error": "Token is required"}, status=400)
 
-        user_id = verify_email_token(token)
-        if not user_id:
-            return Response({"error": "Invalid or expired token"}, status=400)
+        serializer = VerifyEmailOTPSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
-        try:
-            user = User.objects.get(id=user_id)
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=404)
+        email = serializer.validated_data["email"]
+        otp = serializer.validated_data["otp"]
+        purpose = serializer.validated_data["purpose"]
 
-        if user.is_email_verified:
-            return Response({"message": "Email already verified"}, status=200)
 
-        user.is_email_verified = True
-        user.save()
+        otp_record = EmailOTP.objects.filter(
+            email=email,
+            purpose=purpose,
+            is_used=False,
+        ).first()
 
-        return Response({"message": "Email verified successfully"}, status=200)
+        if otp_record is None:
+            return Response(
+                {"error": "Invalid OTP."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not check_password(otp, otp_record.otp):
+            return Response(
+                {"error": "Invalid OTP."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if otp_record.is_expired():
+            return Response(
+                {"error": "OTP has expired."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ===========================================
+        # NORMAL REGISTRATION
+        # ===========================================
+        if purpose == "registration":
+
+            try:
+                user = User.objects.get(email=email)
+
+            except User.DoesNotExist:
+                return Response(
+                    {"error": "User not found."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            user.is_email_verified = True
+            user.save(update_fields=["is_email_verified"])
+
+            otp_record.is_used = True
+            otp_record.save(update_fields=["is_used"])
+
+            return Response(
+                {
+                    "message": "Email verified successfully."
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # ===========================================
+        # GUEST CHECKOUT
+        # ===========================================
+        elif purpose == "guest_checkout":
+
+            user = User.objects.create_user(
+                email=otp_record.email,
+                first_name=otp_record.first_name,
+                last_name=otp_record.last_name,
+            )
+
+            user.is_email_verified = True
+            user.set_unusable_password()
+            user.save()
+
+            refresh = RefreshToken.for_user(user)
+
+            otp_record.is_used = True
+            otp_record.save(update_fields=["is_used"])
+
+            return Response(
+                {
+                    "message": "Email verified successfully.",
+
+                    "access": str(refresh.access_token),
+                    "refresh": str(refresh),
+
+                    "user": {
+                        "id": user.id,
+                        "email": user.email,
+                        "first_name": user.first_name,
+                        "last_name": user.last_name,
+                    }
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
+        return Response(
+            {
+                "error": "Invalid verification purpose."
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    
+
+
+@extend_schema(
+    tags=["auth"],
+    description="Check Email",
+    request=EmailCheckSerializer,
+    responses={200: None}
+)
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def check_email(request):
+
+    serializer = EmailCheckSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+
+    email = serializer.validated_data["email"]
+
+    exists = CustomUser.objects.filter(
+        email__iexact=email
+    ).exists()
+
+    return Response({
+        "exists": exists
+    })
 
 

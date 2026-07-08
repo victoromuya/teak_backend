@@ -2,7 +2,7 @@ import requests
 from django.conf import settings
 from django.shortcuts import redirect
 from rest_framework.viewsets import ModelViewSet
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from .models import Order, OrderItem, Ticket
 from .serializers import OrderCreateSerializer, OrderSerializer
@@ -42,7 +42,11 @@ from drf_spectacular.utils import extend_schema, OpenApiExample
 )
 class OrderViewSet(ModelViewSet):
     queryset = Order.objects.all()
-    permission_classes = [IsAuthenticated]
+    def get_permissions(self):
+        if self.action == "create":
+            return [AllowAny()]
+
+        return [IsAuthenticated()]
 
     def get_serializer_class(self):
         if self.action == "create":
