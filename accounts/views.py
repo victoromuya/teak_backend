@@ -214,7 +214,6 @@ class VerifyEmailView(APIView):
         otp = serializer.validated_data["otp"]
         purpose = serializer.validated_data["purpose"]
 
-
         otp_record = EmailOTP.objects.filter(
             email=email,
             purpose=purpose,

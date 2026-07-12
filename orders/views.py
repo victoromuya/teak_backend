@@ -5,7 +5,11 @@ from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from .models import Order, OrderItem, Ticket
-from .serializers import OrderCreateSerializer, OrderSerializer
+from .serializers import (
+    OrderCreateSerializer,
+    OrderSerializer,
+    PurchasedTicketSerializer,
+)
 
 from django.db import transaction
 from rest_framework.decorators import action, api_view, permission_classes
@@ -169,6 +173,33 @@ class OrderViewSet(ModelViewSet):
     def pending(self, request):
         queryset = self.get_queryset().filter(status='pending')
         serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+    @extend_schema(
+        tags=["Tickets"],
+        description="List tickets purchased by the authenticated user",
+        responses=PurchasedTicketSerializer(many=True),
+    )
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="my-tickets",
+        permission_classes=[IsAuthenticated],
+    )
+    def my_tickets(self, request):
+        tickets = Ticket.objects.filter(
+            order__user=request.user,
+            order__status="paid",
+        ).select_related(
+            "ticket_type",
+            "order__event",
+        ).order_by("-created_at")
+
+        serializer = PurchasedTicketSerializer(
+            tickets,
+            many=True,
+            context={"request": request},
+        )
         return Response(serializer.data)
 
 

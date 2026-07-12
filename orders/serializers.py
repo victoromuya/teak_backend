@@ -17,6 +17,42 @@ class TicketSerializer(serializers.ModelSerializer):
         model = Ticket
         fields = "__all__"
 
+
+class PurchasedTicketSerializer(serializers.ModelSerializer):
+    ticket_type = serializers.CharField(source="ticket_type.name", read_only=True)
+    price = serializers.DecimalField(
+        source="ticket_type.price",
+        max_digits=10,
+        decimal_places=2,
+        read_only=True,
+    )
+    order_reference = serializers.CharField(source="order.reference", read_only=True)
+    event = EventSerializer(source="order.event", read_only=True)
+    qr_code_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Ticket
+        fields = [
+            "id",
+            "ticket_code",
+            "ticket_type",
+            "price",
+            "order_reference",
+            "event",
+            "qr_code_url",
+            "is_used",
+            "scanned_at",
+            "created_at",
+        ]
+
+    def get_qr_code_url(self, obj):
+        if not obj.qr_image:
+            return None
+
+        request = self.context.get("request")
+        url = obj.qr_image.url
+        return request.build_absolute_uri(url) if request else url
+
 class OrderItemInputSerializer(serializers.Serializer):
     ticket_type = serializers.IntegerField()
     quantity = serializers.IntegerField()
