@@ -1,7 +1,7 @@
 # events/views.py
 
 from rest_framework.viewsets import ModelViewSet
-from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly, AllowAny
+from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.http import Http404
@@ -276,7 +276,7 @@ class TicketTypeViewSet(ModelViewSet):
         if self.action in ["update", "partial_update", "destroy"]:
             return [IsAuthenticated(), CanManageTicketType()]
 
-        return [[AllowAny()]]
+        return super().get_permissions()
 
 
 
