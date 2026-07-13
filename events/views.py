@@ -52,7 +52,7 @@ class EventViewSet(ModelViewSet):
         if self.action in ["update", "partial_update", "destroy"]:
             return [IsAuthenticated(), CanDeleteEvent()]
 
-        return []
+        return super().get_permissions()
 
 
     def get_object(self):

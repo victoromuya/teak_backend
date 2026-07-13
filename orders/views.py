@@ -1,5 +1,7 @@
 import requests
+from decimal import Decimal
 from django.conf import settings
+from django.db.models import Count, Sum
 from django.shortcuts import redirect
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -24,6 +26,8 @@ from rest_framework import status
 from django.core.mail import EmailMultiAlternatives
 from email.mime.image import MIMEImage
 from drf_spectacular.utils import extend_schema, OpenApiExample
+from events.models import Event
+from events.permissions import IsOrganizer
 
 
 @extend_schema(
@@ -46,11 +50,13 @@ from drf_spectacular.utils import extend_schema, OpenApiExample
 )
 class OrderViewSet(ModelViewSet):
     queryset = Order.objects.all()
+    permission_classes = [IsAuthenticated]
+
     def get_permissions(self):
         if self.action == "create":
             return [AllowAny()]
 
-        return [IsAuthenticated()]
+        return super().get_permissions()
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -201,6 +207,116 @@ class OrderViewSet(ModelViewSet):
             context={"request": request},
         )
         return Response(serializer.data)
+
+    @extend_schema(
+        tags=["Organizer"],
+        description="List orders placed for events owned by the authenticated organizer",
+        responses=OrderSerializer(many=True),
+    )
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="organizer-orders",
+        permission_classes=[IsOrganizer],
+    )
+    def organizer_orders(self, request):
+        orders = Order.objects.filter(
+            event__organizer=request.user,
+        ).select_related(
+            "event",
+            "user",
+        ).order_by("-created_at")
+
+        event_id = request.query_params.get("event")
+        if event_id:
+            orders = orders.filter(event_id=event_id)
+
+        page = self.paginate_queryset(orders)
+        if page is not None:
+            serializer = OrderSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = OrderSerializer(orders, many=True)
+        return Response(serializer.data)
+
+    @extend_schema(
+        tags=["Organizer"],
+        description=(
+            "Return paid revenue and sold-ticket totals for all events owned "
+            "by the authenticated organizer"
+        ),
+    )
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="organizer-summary",
+        permission_classes=[IsOrganizer],
+    )
+    def organizer_summary(self, request):
+        events = list(
+            Event.objects.filter(organizer=request.user)
+            .order_by("-created_at")
+            .values("id", "title")
+        )
+        paid_orders = Order.objects.filter(
+            event__organizer=request.user,
+            status="paid",
+        )
+
+        order_stats = {
+            row["event_id"]: row
+            for row in paid_orders.values("event_id").annotate(
+                total_revenue=Sum("total_amount"),
+                total_paid_orders=Count("id"),
+            )
+        }
+        ticket_stats = {
+            row["order__event_id"]: row["total_tickets_sold"]
+            for row in Ticket.objects.filter(
+                order__event__organizer=request.user,
+                order__status="paid",
+            )
+            .values("order__event_id")
+            .annotate(total_tickets_sold=Count("id"))
+        }
+
+        event_summaries = []
+        total_revenue = Decimal("0.00")
+        total_paid_orders = 0
+        total_tickets_sold = 0
+
+        for event in events:
+            event_order_stats = order_stats.get(event["id"], {})
+            event_revenue = event_order_stats.get(
+                "total_revenue",
+                Decimal("0.00"),
+            )
+            event_paid_orders = event_order_stats.get("total_paid_orders", 0)
+            event_tickets_sold = ticket_stats.get(event["id"], 0)
+
+            total_revenue += event_revenue
+            total_paid_orders += event_paid_orders
+            total_tickets_sold += event_tickets_sold
+
+            event_summaries.append(
+                {
+                    "event_id": event["id"],
+                    "event_title": event["title"],
+                    "total_revenue": event_revenue,
+                    "total_paid_orders": event_paid_orders,
+                    "total_tickets_sold": event_tickets_sold,
+                }
+            )
+
+        return Response(
+            {
+                "total_events": len(events),
+                "total_revenue": total_revenue,
+                "total_paid_orders": total_paid_orders,
+                "total_tickets_sold": total_tickets_sold,
+                "events": event_summaries,
+            }
+        )
 
 
 @extend_schema(

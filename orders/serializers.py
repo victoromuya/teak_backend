@@ -84,6 +84,17 @@ class OrderCreateSerializer(serializers.Serializer):
             if len(ticket_map) != len(ticket_ids):
                 raise serializers.ValidationError("Invalid ticket type selected.")
 
+            event_id = validated_data["event"]
+            if any(ticket.event_id != event_id for ticket in tickets):
+                raise serializers.ValidationError(
+                    {
+                        "items": (
+                            "All selected ticket types must belong to the "
+                            "event being ordered."
+                        )
+                    }
+                )
+
             for item in items_data:
                 ticket = ticket_map[item["ticket_type"]]
 
