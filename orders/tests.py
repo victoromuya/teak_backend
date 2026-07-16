@@ -1,6 +1,9 @@
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.utils import timezone
+from datetime import timedelta
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -113,6 +116,77 @@ class OrderEventTicketTypeValidationTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("items", response.data)
         self.assertFalse(Order.objects.filter(user=self.buyer).exists())
+
+
+class OrderTicketSalesExpiryTests(APITestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.buyer = user_model.objects.create_user(
+            email="sales-expiry-buyer@example.com",
+            password="password123",
+        )
+        organizer = user_model.objects.create_user(
+            email="sales-expiry-organizer@example.com",
+            password="password123",
+            is_organizer=True,
+        )
+        self.event = Event.objects.create(
+            organizer=organizer,
+            title="Sales Expiry Event",
+            description="Tests exact ticket sale closing times.",
+        )
+        self.client.force_authenticate(self.buyer)
+
+    def create_ticket_type(self, name, sales_expiry_date):
+        return TicketType.objects.create(
+            event=self.event,
+            name=name,
+            price="1000.00",
+            sales_expiry_date=sales_expiry_date,
+        )
+
+    def place_order(self, ticket_type):
+        return self.client.post(
+            "/api/orders/",
+            {
+                "event": self.event.pk,
+                "items": [{"ticket_type": ticket_type.pk, "quantity": 1}],
+            },
+            format="json",
+        )
+
+    def test_rejects_order_after_ticket_sales_expiry_time(self):
+        ticket_type = self.create_ticket_type(
+            "Expired VIP",
+            timezone.now() - timedelta(seconds=1),
+        )
+
+        response = self.place_order(ticket_type)
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        expected_message = (
+            "Expired VIP tickets are no longer available for sale because "
+            "the sales period has ended."
+        )
+        self.assertEqual(str(response.data["message"]), expected_message)
+        self.assertEqual(str(response.data["items"]), expected_message)
+        self.assertFalse(Order.objects.filter(user=self.buyer).exists())
+
+    @patch("orders.views.requests.post")
+    def test_allows_order_before_ticket_sales_expiry_time(self, paystack_post):
+        paystack_post.return_value.json.return_value = {
+            "status": True,
+            "data": {"authorization_url": "https://pay.example/checkout"},
+        }
+        ticket_type = self.create_ticket_type(
+            "Available VIP",
+            timezone.now() + timedelta(hours=1),
+        )
+
+        response = self.place_order(ticket_type)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(Order.objects.filter(user=self.buyer).exists())
 
 
 class OrganizerOrderReportingTests(APITestCase):

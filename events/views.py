@@ -6,6 +6,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.http import Http404
 from django.conf import settings
+from django.db.models import Q
 from .permissions import CanDeleteEvent, IsOrganizer, IsOrganizerOrAdmin, CanManageTicketType
 from .models import Event, TicketType
 from .serializers import EventSerializer, TicketTypeSerializer, SoldTicketSerializer
@@ -29,16 +30,27 @@ class EventViewSet(ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-
         queryset = Event.objects.all()
 
         # Admin sees everything
         if user.is_authenticated and user.is_staff:
             return queryset
 
-        # Everyone else (public and logged-in users)
-        # sees all active events
-        return queryset.filter(is_active=True)
+        today = timezone.localdate()
+        upcoming_events = Q(is_active=True) & (
+            Q(end_date__gte=today)
+            | Q(end_date__isnull=True, start_date__gte=today)
+        )
+
+        # Organizers retain access to all events they created, including past
+        # and inactive events. Everyone else sees only active events that are
+        # ongoing or upcoming.
+        if user.is_authenticated and getattr(user, "is_organizer", False):
+            return queryset.filter(
+                upcoming_events | Q(organizer=user)
+            ).distinct()
+
+        return queryset.filter(upcoming_events)
 
 
     def perform_create(self, serializer):

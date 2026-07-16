@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.db import transaction
+from django.utils import timezone
 from events.models import TicketType
 from events.serializers import EventSerializer
 from .models import Order, OrderItem, Ticket
@@ -95,8 +96,22 @@ class OrderCreateSerializer(serializers.Serializer):
                     }
                 )
 
+            now = timezone.now()
             for item in items_data:
                 ticket = ticket_map[item["ticket_type"]]
+
+                if (
+                    ticket.sales_expiry_date is not None
+                    and now >= ticket.sales_expiry_date
+                ):
+                    message = (
+                        f"{ticket.name} tickets are no longer available for "
+                        "sale because the sales period has ended."
+                    )
+                    raise serializers.ValidationError({
+                        "items": message,
+                        "message": message,
+                    })
 
                 if item["quantity"] > ticket.remaining:
                     raise serializers.ValidationError(
