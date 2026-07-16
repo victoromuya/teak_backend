@@ -37,8 +37,19 @@ class EventSerializer(serializers.ModelSerializer):
                 "Please choose today or a future date for the event end date."
             )
 
+        if start_date and end_date and end_date < start_date:
+            errors["end_date"] = (
+                "Please choose an event end date that is the same as or later "
+                "than the start date."
+            )
+
         if errors:
-            errors["message"] = "Events cannot be created using past dates."
+            if start_date and end_date and end_date < start_date:
+                errors["message"] = (
+                    "The event end date cannot be earlier than the start date."
+                )
+            else:
+                errors["message"] = "Events cannot be created using past dates."
             raise serializers.ValidationError(errors)
 
         return attrs

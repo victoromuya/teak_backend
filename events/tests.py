@@ -71,6 +71,30 @@ class EventCreationDateValidationTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
+    def test_rejects_end_date_earlier_than_start_date(self):
+        today = timezone.localdate()
+
+        response = self.client.post(
+            self.url,
+            self.event_payload(
+                today + timedelta(days=2),
+                today + timedelta(days=1),
+            ),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            str(response.data["message"][0]),
+            "The event end date cannot be earlier than the start date.",
+        )
+        self.assertEqual(
+            str(response.data["end_date"][0]),
+            "Please choose an event end date that is the same as or later "
+            "than the start date.",
+        )
+        self.assertFalse(Event.objects.filter(organizer=self.organizer).exists())
+
 
 class EventVisibilityTests(APITestCase):
     def setUp(self):
