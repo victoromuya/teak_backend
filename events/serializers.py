@@ -54,6 +54,19 @@ class EventSerializer(serializers.ModelSerializer):
 
         return attrs
 
+
+class ContactOrganizerSerializer(serializers.Serializer):
+    subject = serializers.CharField(max_length=200, trim_whitespace=True)
+    message = serializers.CharField(max_length=5000, trim_whitespace=True)
+
+    def validate_subject(self, value):
+        if "\n" in value or "\r" in value:
+            raise serializers.ValidationError(
+                "The subject must not contain line breaks."
+            )
+        return value
+
+
 class TicketTypeSerializer(serializers.ModelSerializer):
     event = serializers.PrimaryKeyRelatedField(
         queryset=Event.objects.all()

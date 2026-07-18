@@ -5,11 +5,18 @@ from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnl
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.http import Http404
+from django.shortcuts import get_object_or_404
 from django.conf import settings
+from django.core.mail import EmailMultiAlternatives
 from django.db.models import Q
 from .permissions import CanDeleteEvent, IsOrganizer, IsOrganizerOrAdmin, CanManageTicketType
 from .models import Event, TicketType
-from .serializers import EventSerializer, TicketTypeSerializer, SoldTicketSerializer
+from .serializers import (
+    ContactOrganizerSerializer,
+    EventSerializer,
+    TicketTypeSerializer,
+    SoldTicketSerializer,
+)
 from drf_spectacular.utils import extend_schema
 
 from rest_framework import status
@@ -168,6 +175,67 @@ class EventViewSet(ModelViewSet):
 
         serializer = TicketTypeSerializer(queryset, many=True)
         return Response(serializer.data)
+
+    @extend_schema(
+        tags=["Events"],
+        description=(
+            "Send an email to the event organizer. Available to authenticated "
+            "users for public events and to users with a paid order for the event."
+        ),
+        request=ContactOrganizerSerializer,
+        responses={200: None},
+    )
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="contact-organizer",
+        permission_classes=[IsAuthenticated],
+    )
+    def contact_organizer(self, request, pk=None):
+        # Do not use get_object() here: paid ticket holders must retain contact
+        # access when an event has ended or has subsequently been deactivated.
+        event = get_object_or_404(
+            Event.objects.select_related("organizer"),
+            pk=pk,
+        )
+
+        today = timezone.localdate()
+        is_public = event.is_active and (
+            (event.end_date is not None and event.end_date >= today)
+            or (event.end_date is None and (
+                event.start_date is not None and event.start_date >= today
+            ))
+        )
+        has_purchased = event.order_set.filter(
+            user=request.user,
+            status="paid",
+        ).exists()
+
+        if not is_public and not has_purchased:
+            raise Http404("Event not found")
+
+        serializer = ContactOrganizerSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        sender_email = request.user.email
+        sender_name = request.user.get_full_name() or sender_email
+        body = (
+            f"Message from {sender_name} ({sender_email}) about "
+            f'\"{event.title}\":\n\n{serializer.validated_data["message"]}'
+        )
+        email = EmailMultiAlternatives(
+            subject=(
+                f'[Event enquiry: {event.title}] '
+                f'{serializer.validated_data["subject"]}'
+            ),
+            body=body,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[event.organizer.email],
+            reply_to=[sender_email],
+        )
+        email.send(fail_silently=False)
+
+        return Response({"message": "Your message has been sent to the organizer."})
     
 
  # ===================================

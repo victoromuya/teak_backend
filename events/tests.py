@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase
+from django.core import mail
 from django.utils import timezone
 from datetime import timedelta
 from rest_framework.permissions import IsAuthenticatedOrReadOnly
@@ -159,6 +160,90 @@ class EventVisibilityTests(APITestCase):
         response = self.client.get(f"/api/events/{self.past_event.id}/")
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class ContactOrganizerTests(APITestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.organizer = user_model.objects.create_user(
+            email="contact-organizer@example.com",
+            password="password123",
+            first_name="Event",
+            last_name="Organizer",
+            is_organizer=True,
+        )
+        self.buyer = user_model.objects.create_user(
+            email="contact-buyer@example.com",
+            password="password123",
+            first_name="Ticket",
+            last_name="Buyer",
+        )
+        self.event = Event.objects.create(
+            organizer=self.organizer,
+            title="Contactable Event",
+            description="Contact endpoint test event.",
+            start_date=timezone.localdate() + timedelta(days=2),
+            end_date=timezone.localdate() + timedelta(days=3),
+            is_active=True,
+        )
+        self.url = f"/api/events/{self.event.pk}/contact-organizer/"
+        self.payload = {
+            "subject": "Accessibility question",
+            "message": "Is the venue wheelchair accessible?",
+        }
+
+    def test_requires_authentication(self):
+        response = self.client.post(self.url, self.payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_prospective_buyer_can_contact_organizer_for_public_event(self):
+        self.client.force_authenticate(self.buyer)
+
+        response = self.client.post(self.url, self.payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, [self.organizer.email])
+        self.assertEqual(mail.outbox[0].reply_to, [self.buyer.email])
+        self.assertIn(self.payload["message"], mail.outbox[0].body)
+
+    def test_paid_order_holder_can_contact_organizer_after_event_is_inactive(self):
+        self.event.is_active = False
+        self.event.save(update_fields=["is_active"])
+        Order.objects.create(
+            user=self.buyer,
+            event=self.event,
+            reference="contact-paid-order",
+            total_amount="0.00",
+            status="paid",
+        )
+        self.client.force_authenticate(self.buyer)
+
+        response = self.client.post(self.url, self.payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_non_purchaser_cannot_contact_organizer_for_inactive_event(self):
+        self.event.is_active = False
+        self.event.save(update_fields=["is_active"])
+        self.client.force_authenticate(self.buyer)
+
+        response = self.client.post(self.url, self.payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_rejects_subject_header_injection(self):
+        self.client.force_authenticate(self.buyer)
+        payload = {**self.payload, "subject": "Question\nBcc: victim@example.com"}
+
+        response = self.client.post(self.url, payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(len(mail.outbox), 0)
 
 
 class TicketTypePermissionTests(SimpleTestCase):
