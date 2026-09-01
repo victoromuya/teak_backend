@@ -1,11 +1,12 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import OrderViewSet, verify_payment, payment_success
+from .views import OrderViewSet, WithdrawalRequestViewSet, verify_payment, payment_success
 from .webhook import paystack_webhook
 
 
 router = DefaultRouter()
 router.register(r'orders', OrderViewSet, basename='orders')
+router.register(r'withdrawals', WithdrawalRequestViewSet, basename='withdrawals')
 
 # urlpatterns = router.urls + [
 #     path("payments/webhook/", paystack_webhook),

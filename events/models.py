@@ -35,7 +35,19 @@ class Event(models.Model):
     attendees_age_range = models.CharField(max_length=50, blank=True, null=True)  # e.g., "18-35"
     banner = models.ImageField(upload_to="events/", blank=True, null=True)
     is_active = models.BooleanField(default=True)
+    is_featured = models.BooleanField(default=False)
+    is_deleted = models.BooleanField(default=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def event_date_has_passed(self):
+        event_date = self.end_date or self.start_date
+        return bool(event_date and event_date < timezone.localdate())
+
+    def archive(self):
+        """Hide an event without breaking protected order history."""
+        self.is_active = False
+        self.is_deleted = True
+        self.save(update_fields=["is_active", "is_deleted"])
 
     class Meta:
         db_table = 'Events'

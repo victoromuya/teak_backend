@@ -1,13 +1,18 @@
 from rest_framework import generics, status, permissions
 from rest_framework.viewsets import ModelViewSet
 # from .models import User
-from .serializers import RegisterSerializer, UserSerializer, EmailVerificationRequestSerializer
+from .serializers import ContactSerializer, RegisterSerializer, UserSerializer, EmailVerificationRequestSerializer
 from rest_framework.views import APIView
 
 from .permissions import IsAdmin, IsOrganizer, IsNormalUser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.db.models import Sum, Count
+from django.conf import settings
+from glob_utils.send_email import send_email
+from django.db import transaction
+from django.http import HttpResponseRedirect
+from urllib.parse import urlencode
 
 from django.contrib.auth.hashers import make_password, check_password
 
@@ -33,8 +38,9 @@ from .models import CustomUser, EmailOTP
 from drf_spectacular.utils import extend_schema
 from rest_framework_simplejwt.views import TokenObtainPairView
 from events.models import Event
-from orders.models import Order 
+from orders.models import Order, Ticket
 from rest_framework_simplejwt.tokens import RefreshToken
+from smtplib import SMTPException
 
 
 User = get_user_model()
@@ -52,6 +58,15 @@ class RegisterView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
     permission_classes = [permissions.AllowAny]  # Allow unauthenticated users to sign up
 
+    def create(self, request, *args, **kwargs):
+        try:
+            return super().create(request, *args, **kwargs)
+        except (SMTPException, OSError):
+            return Response(
+                {"detail": "Verification email could not be sent. Please try again."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
 
 class OrganizerProfileView(APIView):
     permission_classes = [IsAuthenticated]
@@ -66,10 +81,10 @@ class OrganizerProfileView(APIView):
 
         total_events = events.count()
 
-        total_tickets_sold = Order.objects.filter(
-            event__organizer=request.user,
-            status="paid"  # if you track payment status
-        ).aggregate(total=Count('id'))['total'] or 0
+        total_tickets_sold = Ticket.objects.filter(
+            order__event__organizer=request.user,
+            order__status="paid"
+        ).count()
 
         total_revenue = Order.objects.filter(
             event__organizer=request.user,
@@ -134,6 +149,41 @@ class UserProfileView(APIView):
         return Response(serializer.errors, status=400)
 
 
+class ActivateOrganizerView(APIView):
+    """Explicit one-way enrollment into organizer capabilities."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        if not user.is_organizer:
+            user.is_organizer = True
+            user.save(update_fields=["is_organizer"])
+
+        return Response(UserSerializer(user).data)
+
+
+class ContactView(APIView):
+    permission_classes = [AllowAny]
+
+    @method_decorator(ratelimit(key="ip", rate="5/m", block=True))
+    def post(self, request):
+        serializer = ContactSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        send_email(
+            subject=f"Contact form: {data['subject']}",
+            body=(
+                f"From: {data['name']} <{data['email']}>\n\n"
+                f"{data['message']}"
+            ),
+            to_email=settings.CONTACT_EMAIL,
+            heading="New website enquiry",
+            reply_to=[data["email"]],
+        )
+        return Response({"success": True, "message": "Message sent successfully."})
+
+
 @extend_schema(
     tags=["auth"],
     description="Request Password Reset link",
@@ -147,8 +197,14 @@ class PasswordResetRequestView(APIView):
 
         serializer = PasswordResetRequestSerializer(data=request.data)
 
-        if serializer.is_valid():
-            return Response({"message": "If the email exists, a reset link was sent"})
+        try:
+            if serializer.is_valid():
+                return Response({"message": "If the email exists, a reset link was sent"})
+        except (SMTPException, OSError):
+            return Response(
+                {"detail": "Reset email could not be sent. Please try again."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
         return Response(serializer.errors, status=400)
 
@@ -159,6 +215,15 @@ class PasswordResetRequestView(APIView):
     responses={200: None}
 )
 class PasswordResetConfirmView(APIView):
+
+    def get(self, request):
+        """Keep previously emailed API links working after the frontend move."""
+        token = request.query_params.get("token", "")
+        query = urlencode({"token": token}) if token else ""
+        reset_url = (
+            f"{settings.PASSWORD_RESET_FRONTEND_URL.rstrip('/')}/reset-password"
+        )
+        return HttpResponseRedirect(f"{reset_url}?{query}" if query else reset_url)
 
     @method_decorator(ratelimit(key="ip", rate="10/m", block=True))
     def post(self, request):
@@ -180,12 +245,19 @@ class EmailVerificationRequestView(APIView):
 
     permission_classes = []
 
+    @method_decorator(ratelimit(key="ip", rate="5/m", block=True))
     def post(self, request):
         serializer = EmailVerificationRequestSerializer(
             data=request.data
         )
 
-        serializer.is_valid(raise_exception=True)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except (SMTPException, OSError):
+            return Response(
+                {"detail": "Verification email could not be sent. Please try again."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
         return Response(
             {
@@ -205,6 +277,8 @@ class VerifyEmailView(APIView):
 
     permission_classes = []
 
+    @method_decorator(ratelimit(key="ip", rate="10/m", block=True))
+    @transaction.atomic
     def post(self, request):
 
         serializer = VerifyEmailOTPSerializer(data=request.data)
@@ -214,7 +288,7 @@ class VerifyEmailView(APIView):
         otp = serializer.validated_data["otp"]
         purpose = serializer.validated_data["purpose"]
 
-        otp_record = EmailOTP.objects.filter(
+        otp_record = EmailOTP.objects.select_for_update().filter(
             email=email,
             purpose=purpose,
             is_used=False,
@@ -333,5 +407,3 @@ def check_email(request):
     return Response({
         "exists": exists
     })
-
-

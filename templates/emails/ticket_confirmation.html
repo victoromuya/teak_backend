@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Your tickets are ready</title></head>
+  <body style="margin:0;background:#f3f5fb;color:#172033;font-family:Arial,Helvetica,sans-serif;">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;">Payment confirmed. Your TickFirst tickets are attached.</div>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:32px 12px;background:#f3f5fb;">
+      <tr><td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#fff;border-radius:20px;overflow:hidden;box-shadow:0 12px 36px rgba(31,42,86,.10);">
+          <tr><td style="padding:30px 38px;background:linear-gradient(135deg,#1626d8,#5363ff);color:#fff;">
+            <div style="font-size:25px;font-weight:800;">TickFirst</div>
+            <div style="margin-top:22px;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;opacity:.8;">Payment confirmed</div>
+            <h1 style="margin:8px 0 0;font-size:30px;line-height:1.2;">Your tickets are ready</h1>
+          </td></tr>
+          <tr><td style="padding:34px 38px;">
+            <p style="margin:0 0 24px;color:#505a70;font-size:16px;line-height:1.7;">Thanks for your order. Your unique QR tickets are attached to this email. Keep them private and present the correct ticket at entry.</p>
+            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f7f8fd;border-radius:14px;padding:8px 20px;">
+              <tr><td style="padding:12px 0;color:#7b8498;font-size:13px;">Event</td><td align="right" style="padding:12px 0;font-weight:700;">{{ order.event.title }}</td></tr>
+              <tr><td style="padding:12px 0;border-top:1px solid #e8ebf4;color:#7b8498;font-size:13px;">Order reference</td><td align="right" style="padding:12px 0;border-top:1px solid #e8ebf4;font-weight:700;">{{ order.reference }}</td></tr>
+              <tr><td style="padding:12px 0;border-top:1px solid #e8ebf4;color:#7b8498;font-size:13px;">Tickets</td><td align="right" style="padding:12px 0;border-top:1px solid #e8ebf4;font-weight:700;">{{ ticket_count }}</td></tr>
+              <tr><td style="padding:12px 0;border-top:1px solid #e8ebf4;color:#7b8498;font-size:13px;">Date</td><td align="right" style="padding:12px 0;border-top:1px solid #e8ebf4;font-weight:700;">{{ order.event.start_date|date:"M j, Y" }}</td></tr>
+              <tr><td style="padding:12px 0;border-top:1px solid #e8ebf4;color:#7b8498;font-size:13px;">Location</td><td align="right" style="padding:12px 0;border-top:1px solid #e8ebf4;font-weight:700;">{{ order.event.city|default:"Online" }}</td></tr>
+            </table>
+            <h2 style="margin:30px 0 12px;font-size:18px;">Attached QR tickets</h2>
+            {% for ticket in tickets %}<div style="margin:8px 0;padding:12px 15px;border:1px solid #e8ebf4;border-radius:10px;color:#505a70;font-size:14px;"><strong style="color:#172033;">Ticket {{ forloop.counter }}</strong> · {{ ticket.ticket_type.name }}<br><span style="font-size:12px;">{{ ticket.ticket_code }}.png</span></div>{% endfor %}
+          </td></tr>
+          <tr><td style="padding:22px 38px 30px;border-top:1px solid #edf0f7;color:#7b8498;font-size:12px;line-height:1.6;">Never share your QR ticket publicly. Each code admits one attendee and may be scanned only once.<br><a href="{{ frontend_url }}" style="color:#2638ef;text-decoration:none;">Visit TickFirst</a></td></tr>
+        </table>
+      </td></tr>
+    </table>
+  </body>
+</html>

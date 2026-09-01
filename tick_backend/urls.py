@@ -8,6 +8,7 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
     SpectacularRedocView,
 )
+from accounts.views import ContactView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -15,6 +16,7 @@ urlpatterns = [
     path('api/', include('events.urls')),
     path('api/', include('orders.urls')),
     path('api/admin/', include('admin_dash.urls')),
+    path('api/contact/send-mail/', ContactView.as_view()),
 
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
 

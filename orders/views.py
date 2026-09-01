@@ -1,16 +1,19 @@
+import csv
 import requests
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from django.conf import settings
-from django.db.models import Count, Sum
-from django.shortcuts import redirect
+from django.db.models import Count, Q, Sum
+from django.shortcuts import get_object_or_404, redirect
+from django.http import HttpResponse
 from rest_framework.viewsets import ModelViewSet
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from .models import Order, OrderItem, Ticket
+from .models import Order, OrderItem, Ticket, WithdrawalRequest
 from .serializers import (
     OrderCreateSerializer,
     OrderSerializer,
     PurchasedTicketSerializer,
+    WithdrawalRequestSerializer,
 )
 
 from django.db import transaction
@@ -23,11 +26,161 @@ from django.core.files import File
 from io import BytesIO
 import qrcode
 from rest_framework import status
+from rest_framework.exceptions import MethodNotAllowed
 from django.core.mail import EmailMultiAlternatives
-from email.mime.image import MIMEImage
+from django.template.loader import render_to_string
 from drf_spectacular.utils import extend_schema, OpenApiExample
 from events.models import Event
 from events.permissions import IsOrganizer
+from .services import (
+    InsufficientInventoryError,
+    InvalidPaymentError,
+    OrderNotFoundError,
+    finalize_paystack_payment,
+)
+from glob_utils.send_email import send_email
+from accounts.permissions import IsAdmin
+
+
+def withdrawal_fee_percentage():
+    try:
+        value = Decimal(str(settings.TICKET_PLATFORM_FEE_PERCENTAGE))
+    except (InvalidOperation, TypeError):
+        value = Decimal("5.00")
+    return min(max(value, Decimal("0")), Decimal("100"))
+
+
+def event_withdrawal_balance(event):
+    gross = Order.objects.filter(event=event, status="paid").aggregate(
+        total=Sum("total_amount")
+    )["total"] or Decimal("0.00")
+    fee_percentage = withdrawal_fee_percentage()
+    fee_amount = (gross * fee_percentage / Decimal("100")).quantize(Decimal("0.01"))
+    net = gross - fee_amount
+    pending_amount = WithdrawalRequest.objects.filter(
+        event=event, status="pending"
+    ).aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
+    withdrawn_amount = WithdrawalRequest.objects.filter(
+        event=event, status="completed"
+    ).aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
+    reserved = pending_amount + withdrawn_amount
+    return {
+        "gross_revenue": gross,
+        "fee_percentage": fee_percentage,
+        "fee_amount": fee_amount,
+        "net_revenue": net,
+        "reserved_amount": reserved,
+        "pending_amount": pending_amount,
+        "withdrawn_amount": withdrawn_amount,
+        "available_amount": max(net - reserved, Decimal("0.00")),
+    }
+
+
+class WithdrawalRequestViewSet(ModelViewSet):
+    serializer_class = WithdrawalRequestSerializer
+    http_method_names = ["get", "post", "head", "options"]
+
+    def get_permissions(self):
+        if self.action in ["complete", "reject"]:
+            return [IsAuthenticated(), IsAdmin()]
+        return [IsAuthenticated()]
+
+    def get_queryset(self):
+        queryset = WithdrawalRequest.objects.select_related("organizer", "event", "completed_by")
+        if self.request.user.is_staff:
+            return queryset
+        return queryset.filter(organizer=self.request.user)
+
+    @action(detail=False, methods=["get"])
+    def balance(self, request):
+        event = get_object_or_404(
+            Event,
+            pk=request.query_params.get("event"),
+            organizer=request.user,
+            is_deleted=False,
+        )
+        return Response(event_withdrawal_balance(event))
+
+    def create(self, request, *args, **kwargs):
+        if not getattr(request.user, "is_organizer", False):
+            return Response(
+                {"detail": "Only organizers can request withdrawals."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        with transaction.atomic():
+            event = get_object_or_404(
+                Event.objects.select_for_update(),
+                pk=request.data.get("event"),
+                organizer=request.user,
+                is_deleted=False,
+            )
+            balance = event_withdrawal_balance(event)
+            if balance["available_amount"] <= 0:
+                return Response(
+                    {"detail": "There is no available revenue to withdraw for this event."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            withdrawal = serializer.save(
+                organizer=request.user,
+                event=event,
+                email=request.user.email,
+                gross_revenue=balance["gross_revenue"],
+                fee_percentage=balance["fee_percentage"],
+                fee_amount=balance["fee_amount"],
+                amount=balance["available_amount"],
+            )
+
+        send_email(
+            "Withdrawal request received",
+            f'Your withdrawal request for "{event.title}" has been received. '
+            f'We will fund {withdrawal.account_name} with NGN {withdrawal.amount:,.2f} '
+            "within 24–48 hours.",
+            request.user.email,
+            heading="Your withdrawal is being processed",
+            action_label="View event",
+            action_url=f'{settings.FRONTEND_URL.rstrip("/")}/organizer/event/{event.pk}',
+        )
+        return Response(self.get_serializer(withdrawal).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"])
+    def complete(self, request, pk=None):
+        with transaction.atomic():
+            withdrawal = WithdrawalRequest.objects.select_for_update().select_related(
+                "organizer", "event"
+            ).get(pk=pk)
+            if withdrawal.status != "pending":
+                return Response(
+                    {"detail": "Only pending withdrawals can be completed."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            withdrawal.status = "completed"
+            withdrawal.completed_at = timezone.now()
+            withdrawal.completed_by = request.user
+            withdrawal.admin_note = request.data.get("admin_note", "")
+            withdrawal.save(update_fields=["status", "completed_at", "completed_by", "admin_note"])
+
+        send_email(
+            "Withdrawal completed",
+            f'Your withdrawal of NGN {withdrawal.amount:,.2f} for '
+            f'"{withdrawal.event.title}" has been paid to '
+            f'{withdrawal.bank_name} account {withdrawal.account_number}.',
+            withdrawal.email,
+            heading="Your payment has been made",
+        )
+        return Response(self.get_serializer(withdrawal).data)
+
+    @action(detail=True, methods=["post"])
+    def reject(self, request, pk=None):
+        withdrawal = self.get_object()
+        if withdrawal.status != "pending":
+            return Response({"detail": "Only pending withdrawals can be rejected."}, status=409)
+        withdrawal.status = "rejected"
+        withdrawal.admin_note = request.data.get("admin_note", "")
+        withdrawal.save(update_fields=["status", "admin_note"])
+        return Response(self.get_serializer(withdrawal).data)
 
 
 @extend_schema(
@@ -52,12 +205,6 @@ class OrderViewSet(ModelViewSet):
     queryset = Order.objects.all()
     permission_classes = [IsAuthenticated]
 
-    def get_permissions(self):
-        if self.action == "create":
-            return [AllowAny()]
-
-        return super().get_permissions()
-
     def get_serializer_class(self):
         if self.action == "create":
             return OrderCreateSerializer
@@ -75,7 +222,26 @@ class OrderViewSet(ModelViewSet):
 
         if user.is_staff:
             return Order.objects.all()
+        if self.action == "destroy" and getattr(user, "is_organizer", False):
+            return Order.objects.filter(
+                Q(user=user) | Q(event__organizer=user)
+            ).distinct()
         return Order.objects.filter(user=user)
+
+    def update(self, request, *args, **kwargs):
+        raise MethodNotAllowed("PUT", detail="Orders are immutable.")
+
+    def partial_update(self, request, *args, **kwargs):
+        raise MethodNotAllowed("PATCH", detail="Orders are immutable.")
+
+    def destroy(self, request, *args, **kwargs):
+        order = self.get_object()
+        if order.status == "paid":
+            return Response(
+                {"detail": "Paid orders are permanent financial records and cannot be deleted."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return super().destroy(request, *args, **kwargs)
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -130,7 +296,11 @@ class OrderViewSet(ModelViewSet):
             return Response(
                 {
                     "message": "Free ticket booked successfully.",
+                    "order_id": order.id,
                     "order_reference": order.reference,
+                    "reference": order.reference,
+                    "status": order.status,
+                    "tickets_count": len(ticket_data),
                     "tickets": ticket_data,
                 },
                 status=status.HTTP_201_CREATED,
@@ -225,7 +395,7 @@ class OrderViewSet(ModelViewSet):
         ).select_related(
             "event",
             "user",
-        ).order_by("-created_at")
+        ).prefetch_related("items").order_by("-created_at")
 
         event_id = request.query_params.get("event")
         if event_id:
@@ -241,6 +411,89 @@ class OrderViewSet(ModelViewSet):
 
     @extend_schema(
         tags=["Organizer"],
+        description="Download one CSV row for every successfully issued ticket",
+    )
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="organizer-attendees",
+        permission_classes=[IsOrganizer],
+    )
+    def organizer_attendees(self, request):
+        event_id = request.query_params.get("event")
+        if not event_id:
+            return Response(
+                {"detail": "Choose an event before downloading its attendee CSV."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        event = get_object_or_404(
+            Event,
+            pk=event_id,
+            organizer=request.user,
+            is_deleted=False,
+        )
+        tickets = Ticket.objects.filter(
+            order__event=event,
+            order__status="paid",
+        ).select_related(
+            "order__user",
+            "order__event",
+            "ticket_type",
+            "scanned_by",
+        ).order_by("order__event__title", "order__created_at", "created_at")
+
+        response = HttpResponse(content_type="text/csv; charset=utf-8")
+        safe_event_id = str(event.pk)
+        response["Content-Disposition"] = (
+            f'attachment; filename="tickfirst-event-{safe_event_id}-attendees.csv"'
+        )
+        response.write("\ufeff")
+        writer = csv.writer(response)
+        writer.writerow([
+            "Event ID", "Event Title", "Event Start Date", "Event End Date",
+            "Attendee User ID", "Attendee Name", "Attendee Email", "Order ID",
+            "Order Reference", "Order Status", "Order Amount (NGN)", "Order Date",
+            "Payment Verified At", "Ticket Type", "Ticket Price (NGN)",
+            "Ticket Code", "Ticket Status", "Ticket Issued At", "Scanned At",
+            "Scanned By",
+        ])
+
+        def format_datetime(value):
+            return timezone.localtime(value).isoformat() if value else ""
+
+        for ticket in tickets:
+            order = ticket.order
+            event = order.event
+            attendee = order.user
+            scanner = ticket.scanned_by
+            writer.writerow([
+                event.pk,
+                event.title,
+                event.start_date.isoformat() if event.start_date else "",
+                event.end_date.isoformat() if event.end_date else "",
+                attendee.pk,
+                attendee.get_full_name() or attendee.email,
+                attendee.email,
+                order.pk,
+                order.reference,
+                order.status,
+                order.total_amount,
+                format_datetime(order.created_at),
+                format_datetime(order.verified_at),
+                ticket.ticket_type.name,
+                ticket.ticket_type.price,
+                ticket.ticket_code,
+                "Used" if ticket.is_used else "Valid",
+                format_datetime(ticket.created_at),
+                format_datetime(ticket.scanned_at),
+                (scanner.get_full_name() or scanner.email) if scanner else "",
+            ])
+
+        return response
+
+    @extend_schema(
+        tags=["Organizer"],
         description=(
             "Return paid revenue and sold-ticket totals for all events owned "
             "by the authenticated organizer"
@@ -253,6 +506,7 @@ class OrderViewSet(ModelViewSet):
         permission_classes=[IsOrganizer],
     )
     def organizer_summary(self, request):
+        current_year = timezone.localdate().year
         events = list(
             Event.objects.filter(organizer=request.user)
             .order_by("-created_at")
@@ -278,6 +532,22 @@ class OrderViewSet(ModelViewSet):
             )
             .values("order__event_id")
             .annotate(total_tickets_sold=Count("id"))
+        }
+        revenue_by_month = {
+            row["created_at__month"]: row["total"]
+            for row in paid_orders.filter(created_at__year=current_year)
+            .values("created_at__month")
+            .annotate(total=Sum("total_amount"))
+        }
+        tickets_by_month = {
+            row["created_at__month"]: row["total"]
+            for row in Ticket.objects.filter(
+                order__event__organizer=request.user,
+                order__status="paid",
+                created_at__year=current_year,
+            )
+            .values("created_at__month")
+            .annotate(total=Count("id"))
         }
 
         event_summaries = []
@@ -314,6 +584,14 @@ class OrderViewSet(ModelViewSet):
                 "total_revenue": total_revenue,
                 "total_paid_orders": total_paid_orders,
                 "total_tickets_sold": total_tickets_sold,
+                "monthly_revenue": [
+                    revenue_by_month.get(month, Decimal("0.00"))
+                    for month in range(1, 13)
+                ],
+                "monthly_tickets_sold": [
+                    tickets_by_month.get(month, 0) for month in range(1, 13)
+                ],
+                "reporting_year": current_year,
                 "events": event_summaries,
             }
         )
@@ -337,25 +615,7 @@ def verify_payment(request, reference=None):
             status=400
         )
 
-    # 1️⃣ Get Order
-    try:
-        order = Order.objects.prefetch_related(
-            "items__ticket_type").get(reference=reference)
-
-    except Order.DoesNotExist:
-        return Response(
-            {"error": "Order not found"},
-            status=404
-        )
-
-    # 2️⃣ Prevent double verification
-    if order.status == "paid":
-        return Response({
-            "message": "Payment already verified",
-            "order_id": order.id
-        })
-
-    # 3️⃣ Verify payment from Paystack
+    # Paystack remains the source of truth; fulfillment is handled below.
     verify_url = f"https://api.paystack.co/transaction/verify/{reference}"
 
     headers = {
@@ -371,10 +631,10 @@ def verify_payment(request, reference=None):
 
         paystack_data = paystack_response.json()
 
-    except requests.RequestException:
+    except (requests.RequestException, ValueError):
         return Response(
             {"error": "Payment verification failed"},
-            status=500
+            status=502
         )
 
     # 4️⃣ Validate Paystack response
@@ -384,68 +644,30 @@ def verify_payment(request, reference=None):
             status=400
         )
 
-    payment_data = paystack_data["data"]
-
-    if payment_data["status"] != "success":
-        return Response(
-            {"error": "Payment not successful"},
-            status=400
+    try:
+        order, tickets, finalized = finalize_paystack_payment(
+            reference,
+            paystack_data.get("data", {}),
         )
+    except OrderNotFoundError as exc:
+        return Response({"error": str(exc)}, status=404)
+    except (InvalidPaymentError, InsufficientInventoryError) as exc:
+        return Response({"error": str(exc)}, status=400)
 
-    # Security: Validate amount
-    expected_amount = int(order.total_amount * 100)
-
-    if payment_data["amount"] != expected_amount:
-        return Response(
-            {"error": "Payment amount mismatch"},
-            status=400
-        )
-
-    # 6️Atomic transaction
-    with transaction.atomic():
-
-        # Lock ticket rows to prevent overselling
-        order_items = order.items.select_related(
-            "ticket_type"
-        ).select_for_update()
-
-        for item in order_items:
-
-            ticket_type = item.ticket_type
-
-            if ticket_type.remaining < item.quantity:
-                return Response(
-                    {
-                        "error":
-                        f"Insufficient tickets for {ticket_type.name}"
-                    },
-                    status=400,
-                )
-
-            # Reduce stock
-            ticket_type.remaining -= item.quantity
-            ticket_type.save(update_fields=["remaining"])
-
-        # Update order
-        order.status = "paid"
-        order.verified_at = timezone.now()
-        order.save(update_fields=["status", "verified_at"])
-
-        tickets = generate_tickets(order)
-
-        # Prepare ticket data for the frontend
-        ticket_data = [{
-            "ticket_code": t.ticket_code,
-            "qr_code_url": request.build_absolute_uri(t.qr_image.url),
-            "ticket_type": t.ticket_type.name
-        } for t in tickets]
-
+    ticket_data = [{
+        "ticket_code": ticket.ticket_code,
+        "qr_code_url": request.build_absolute_uri(ticket.qr_image.url),
+        "ticket_type": ticket.ticket_type.name,
+    } for ticket in tickets]
     return Response({
-        "message": "Payment verified successfully",
+        "message": (
+            "Payment verified successfully"
+            if finalized else "Payment already verified"
+        ),
+        "order_id": order.id,
         "order_reference": order.reference,
-        "tickets": ticket_data
+        "tickets": ticket_data,
     })
-
 
 @api_view(["GET"])
 @permission_classes([])   # Allow any - redirect from Paystack
@@ -498,7 +720,7 @@ def generate_tickets(order):
 def send_ticket_email(order):
     tickets = order.ticket_set.all()
     subject = "Your Ticket Confirmation"
-    from_email = settings.EMAIL_HOST_USER
+    from_email = settings.DEFAULT_FROM_EMAIL
     recipient_list = [order.user.email]
 
     text_content = f"""
@@ -512,42 +734,12 @@ Tickets: {tickets.count()}
 Please view this email in HTML to see your QR codes.
 """
 
-    qr_html_blocks = ""
-    for i, ticket in enumerate(tickets):
-        qr_html_blocks += f"""
-        <div style="margin-bottom:20px;">
-            <p><strong>Ticket #{i + 1}</strong></p>
-            <img src="cid:qr_{i}" width="200" />
-        </div>
-        """
-
-    html_content = f"""
-    <html>
-        <body style="font-family: Arial; background:#f4f4f4; padding:20px;">
-            <div style="max-width:600px; margin:auto; background:white; padding:20px; border-radius:10px;">
-                <h2 style="color:#333;">Payment Successful!</h2>
-                <p>Your ticket has been confirmed.</p>
-                <p><strong>Order Ref:</strong> {order.reference}</p>
-                <p><strong>Total Tickets:</strong> {tickets.count()}</p>
-
-                <hr />
-
-                <h3>Your QR Tickets</h3>
-                {qr_html_blocks}
-
-                <hr />
-
-                <p style="font-size:12px; color:gray;">
-                    Please present this QR code at the event entrance.
-                </p>
-
-                <p><strong>Event:</strong> {order.event.title}</p>
-                <p><strong>Date:</strong> {order.event.start_date}</p>
-                <p><strong>Location:</strong> {order.event.city}</p>
-            </div>
-        </body>
-    </html>
-    """
+    html_content = render_to_string("emails/ticket_confirmation.html", {
+        "order": order,
+        "tickets": tickets,
+        "ticket_count": tickets.count(),
+        "frontend_url": settings.FRONTEND_URL.rstrip("/"),
+    })
 
     msg = EmailMultiAlternatives(
         subject=subject,
@@ -562,16 +754,8 @@ Please view this email in HTML to see your QR codes.
             # ✅ Use .read() directly on the field to get data from Cloudinary
             image_data = ticket.qr_image.read()
             
-            image = MIMEImage(image_data, _subtype="png")
-            image.add_header("Content-ID", f"<qr_{i}>")
-            image.add_header(
-                "Content-Disposition",
-                "inline",
-                filename=f"{ticket.ticket_code}.png",
-            )
-            msg.attach(image)
+            msg.attach(f"{ticket.ticket_code}.png", image_data, "image/png")
     try:
-        msg.mixed_subtype = "related"
         msg.send(fail_silently=False)
         print("email sent!")
     except Exception as e:

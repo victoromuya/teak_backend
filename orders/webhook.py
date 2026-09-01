@@ -1,71 +1,46 @@
-import hmac
 import hashlib
+import hmac
 import json
-from django.http import HttpResponse
+
 from django.conf import settings
+from django.http import HttpResponse
 from django.views.decorators.csrf import csrf_exempt
-from django.db import transaction
-from .models import Order
-from events.models import TicketType
+
+from .services import (
+    InsufficientInventoryError,
+    InvalidPaymentError,
+    OrderNotFoundError,
+    finalize_paystack_payment,
+)
 
 
 @csrf_exempt
 def paystack_webhook(request):
-    payload = request.body
-
-    # TEMPORARY: Skip signature validation for local testing
-    if settings.DEBUG:
-        event = json.loads(payload)
-    else:
-        signature = request.headers.get("x-paystack-signature")
-
-        computed = hmac.new(
-            settings.PAYSTACK_SECRET_KEY.encode(),
-            payload,
-            hashlib.sha512
-        ).hexdigest()
-
-        if computed != signature:
-            return HttpResponse(status=400)
-
-        event = json.loads(payload)
-
-
-# @csrf_exempt
-# def paystack_webhook(request):
-    signature = request.headers.get("x-paystack-signature")
     body = request.body
-
-    computed_hash = hmac.new(
+    signature = request.headers.get("x-paystack-signature")
+    computed_signature = hmac.new(
         settings.PAYSTACK_SECRET_KEY.encode(),
         body,
-        hashlib.sha512
+        hashlib.sha512,
     ).hexdigest()
 
-    if computed_hash != signature:
+    if not signature or not hmac.compare_digest(computed_signature, signature):
         return HttpResponse(status=400)
 
-    payload = json.loads(body)
+    try:
+        payload = json.loads(body)
+    except (TypeError, ValueError):
+        return HttpResponse(status=400)
 
-    if payload["event"] == "charge.success":
-        reference = payload["data"]["reference"]
+    if payload.get("event") != "charge.success":
+        return HttpResponse(status=200)
 
-        with transaction.atomic():
-            try:
-                order = Order.objects.select_for_update().get(reference=reference)
-            except Order.DoesNotExist:
-                return HttpResponse(status=404)
-
-            if order.status == "paid":
-                return HttpResponse(status=200)
-
-            order.status = "paid"
-            order.save()
-
-            # Deduct stock safely
-            for item in order.items.select_related("ticket_type"):
-                ticket = item.ticket_type
-                ticket.quantity -= item.quantity
-                ticket.save()
+    payment_data = payload.get("data", {})
+    try:
+        finalize_paystack_payment(payment_data.get("reference"), payment_data)
+    except OrderNotFoundError:
+        return HttpResponse(status=404)
+    except (InvalidPaymentError, InsufficientInventoryError):
+        return HttpResponse(status=400)
 
     return HttpResponse(status=200)

@@ -8,7 +8,7 @@ from rest_framework_simplejwt.views import (
     TokenRefreshView,
     TokenBlacklistView,
 )
-from .views import MyTokenObtainPairView 
+from .views import ActivateOrganizerView, MyTokenObtainPairView
 
 urlpatterns = [
     path('register/', RegisterView.as_view()),
@@ -18,6 +18,7 @@ urlpatterns = [
     path('logout/', TokenBlacklistView.as_view(), name='token_blacklist'),
     path("organizer/profile/", OrganizerProfileView.as_view()),
     path("user/profile/", UserProfileView.as_view()),
+    path("organizer/activate/", ActivateOrganizerView.as_view()),
 
     path("password-reset/request/", PasswordResetRequestView.as_view()),
     path("password-reset/confirm/", PasswordResetConfirmView.as_view()),
@@ -34,4 +35,3 @@ urlpatterns = [
     # path("admin/events/", AdminEventsView.as_view()),
     # path("admin/orders/", AdminOrdersView.as_view()),
 ]
-

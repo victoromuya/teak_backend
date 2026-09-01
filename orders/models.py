@@ -1,6 +1,8 @@
 import uuid
 from django.db import models
 from django.conf import settings
+from django.core.validators import MinValueValidator, MaxValueValidator
+from decimal import Decimal
 from events.models import Event, TicketType
 from datetime import timezone, timedelta
 
@@ -14,8 +16,8 @@ class Order(models.Model):
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    event = models.ForeignKey(Event, on_delete=models.CASCADE, default=1)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    event = models.ForeignKey(Event, on_delete=models.PROTECT, default=1)
     reference = models.CharField(max_length=100, unique=True, default="aaa")
     total_amount = models.DecimalField(max_digits=12, decimal_places=2)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
@@ -86,3 +88,48 @@ class Ticket(models.Model):
         db_table = "Tickets"
 
 
+class WithdrawalRequest(models.Model):
+    STATUS_CHOICES = (
+        ("pending", "Pending"),
+        ("completed", "Completed"),
+        ("rejected", "Rejected"),
+    )
+
+    organizer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="withdrawal_requests",
+    )
+    event = models.ForeignKey(
+        Event,
+        on_delete=models.PROTECT,
+        related_name="withdrawal_requests",
+    )
+    gross_revenue = models.DecimalField(max_digits=12, decimal_places=2)
+    fee_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        validators=[MinValueValidator(Decimal("0")), MaxValueValidator(Decimal("100"))],
+    )
+    fee_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    contact = models.CharField(max_length=100)
+    account_number = models.CharField(max_length=30)
+    bank_name = models.CharField(max_length=120)
+    account_name = models.CharField(max_length=160)
+    email = models.EmailField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
+    admin_note = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    completed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="completed_withdrawals",
+    )
+
+    class Meta:
+        db_table = "WithdrawalRequests"
+        ordering = ["-created_at"]

@@ -8,12 +8,13 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
+from rest_framework import status
 
 from accounts.permissions import IsAdmin
 from accounts.serializers import UserSerializer
 from events.models import Event, TicketType
 from events.serializers import EventSerializer, TicketTypeSerializer
-from orders.models import Order, Ticket
+from orders.models import Order, Ticket, WithdrawalRequest
 from orders.serializers import OrderSerializer, TicketSerializer
 
 from .serializers import AdminLoginSerializer
@@ -63,18 +64,49 @@ class AdminUserViewSet(ModelViewSet):
 
 
 class AdminEventViewSet(ModelViewSet):
-    queryset = Event.objects.all()
+    queryset = Event.objects.filter(is_deleted=False)
     serializer_class = EventSerializer
     permission_classes = [IsAuthenticated, IsAdmin]
 
     def perform_create(self, serializer):
         serializer.save(organizer=self.request.user)
 
+    def destroy(self, request, *args, **kwargs):
+        event = self.get_object()
+        if event.order_set.exists():
+            event.archive()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        return super().destroy(request, *args, **kwargs)
+
 
 class AdminOrderViewSet(ModelViewSet):
     queryset = Order.objects.all()
     serializer_class = OrderSerializer
     permission_classes = [IsAuthenticated, IsAdmin]
+
+    def update(self, request, *args, **kwargs):
+        if self.get_object().status == "paid":
+            return Response(
+                {"detail": "Paid orders are immutable financial records."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        if self.get_object().status == "paid":
+            return Response(
+                {"detail": "Paid orders are immutable financial records."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return super().partial_update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        if self.get_object().status == "paid":
+            return Response(
+                {"detail": "Paid orders are permanent and cannot be deleted."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return super().destroy(request, *args, **kwargs)
 
 
 class AdminTicketViewSet(ModelViewSet):
@@ -98,6 +130,7 @@ class AdminDashboardView(APIView):
         total_organizers = User.objects.filter(is_organizer=True).count()
         total_events = Event.objects.count()
         total_orders = Order.objects.count()
+        pending_withdrawals = WithdrawalRequest.objects.filter(status="pending").count()
 
         total_revenue = Order.objects.aggregate(total=Sum("total_amount"))["total"] or 0
 
@@ -150,12 +183,22 @@ class AdminDashboardView(APIView):
                 "total_events": total_events,
                 "total_orders": total_orders,
                 "total_revenue": total_revenue,
+                "pending_withdrawals": pending_withdrawals,
             },
             "recent_orders": list(recent_orders),
             "recent_events": list(recent_events),
             "top_events": list(top_events),
             "weekly_orders": list(weekly_orders),
             "monthly_orders": list(monthly_orders),
+            "withdrawals": list(
+                WithdrawalRequest.objects.select_related("organizer", "event")
+                .values(
+                    "id", "organizer__first_name", "organizer__last_name",
+                    "organizer__email", "event__title", "amount", "status",
+                    "contact", "account_number", "bank_name", "account_name",
+                    "email", "created_at",
+                )[:20]
+            ),
         }
 
         return Response(data)

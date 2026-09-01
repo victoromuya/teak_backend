@@ -7,8 +7,8 @@ from rest_framework.response import Response
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.conf import settings
-from django.core.mail import EmailMultiAlternatives
 from django.db.models import Q
+from glob_utils.send_email import send_email
 from .permissions import CanDeleteEvent, IsOrganizer, IsOrganizerOrAdmin, CanManageTicketType
 from .models import Event, TicketType
 from .serializers import (
@@ -31,27 +31,41 @@ from django.utils import timezone
     description="List all events"
 )
 class EventViewSet(ModelViewSet):
-    queryset = Event.objects.all()
+    queryset = Event.objects.filter(is_deleted=False)
     serializer_class = EventSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
 
     def get_queryset(self):
         user = self.request.user
-        queryset = Event.objects.all()
-
-        # Admin sees everything
-        if user.is_authenticated and user.is_staff:
-            return queryset
-
         today = timezone.localdate()
+        Event.objects.filter(
+            is_active=True,
+            is_deleted=False,
+            end_date__lt=today,
+        ).update(is_active=False)
+        # Keep newly published events visible near the top of public listings.
+        # Without an explicit order, database row order is undefined and new
+        # events could appear at the end of the homepage's event collection.
+        queryset = Event.objects.filter(is_deleted=False).order_by("-created_at", "-id")
+
         upcoming_events = Q(is_active=True) & (
             Q(end_date__gte=today)
             | Q(end_date__isnull=True, start_date__gte=today)
         )
 
+        # The general list powers public pages such as the homepage. Keep its
+        # visibility rules identical for anonymous and authenticated visitors;
+        # organizers use the dedicated my_events action for drafts and history.
+        if self.action == "list":
+            return queryset.filter(upcoming_events)
+
+        # Admins retain unrestricted access through detail and management
+        # actions, while the public list above remains public-safe.
+        if user.is_authenticated and user.is_staff:
+            return queryset
+
         # Organizers retain access to all events they created, including past
-        # and inactive events. Everyone else sees only active events that are
-        # ongoing or upcoming.
+        # and inactive events through detail/management actions.
         if user.is_authenticated and getattr(user, "is_organizer", False):
             return queryset.filter(
                 upcoming_events | Q(organizer=user)
@@ -62,6 +76,31 @@ class EventViewSet(ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(organizer=self.request.user)
+
+    def destroy(self, request, *args, **kwargs):
+        event = self.get_object()
+        has_orders = event.order_set.exists()
+
+        if (
+            not request.user.is_staff
+            and has_orders
+            and not event.event_date_has_passed()
+        ):
+            return Response(
+                {
+                    "detail": (
+                        "A published event with orders cannot be deleted until "
+                        "the event date has passed."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        if has_orders:
+            event.archive()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        return super().destroy(request, *args, **kwargs)
 
     def get_permissions(self):
 
@@ -100,9 +139,9 @@ class EventViewSet(ModelViewSet):
     methods=["get"],
     url_path="sold-tickets",
     permission_classes=[CanScanTicket],
-)
+    )
     def sold_tickets(self, request, pk=None):
-        event = self.get_object()
+        event = get_object_or_404(Event, pk=pk)
         self.check_object_permissions(request, event)
 
         tickets = Ticket.objects.filter(
@@ -144,8 +183,17 @@ class EventViewSet(ModelViewSet):
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def my_events(self, request):
         user = request.user
+        Event.objects.filter(
+            organizer=user,
+            is_active=True,
+            is_deleted=False,
+            end_date__lt=timezone.localdate(),
+        ).update(is_active=False)
         # Filter events where the user is the organizer
-        queryset = Event.objects.filter(organizer=user)
+        queryset = Event.objects.filter(
+            organizer=user,
+            is_deleted=False,
+        ).order_by("-created_at", "-id")
         # Optionally, we can also filter by is_active? The requirement didn't specify.
         # We'll return all events created by the user regardless of active status.
         page = self.paginate_queryset(queryset)
@@ -197,6 +245,7 @@ class EventViewSet(ModelViewSet):
         event = get_object_or_404(
             Event.objects.select_related("organizer"),
             pk=pk,
+            is_deleted=False,
         )
 
         today = timezone.localdate()
@@ -220,20 +269,23 @@ class EventViewSet(ModelViewSet):
         sender_email = request.user.email
         sender_name = request.user.get_full_name() or sender_email
         body = (
-            f"Message from {sender_name} ({sender_email}) about "
-            f'\"{event.title}\":\n\n{serializer.validated_data["message"]}'
+            f"{sender_name} ({sender_email}) sent a message about "
+            f'\"{event.title}\".\n\n{serializer.validated_data["message"]}'
         )
-        email = EmailMultiAlternatives(
+        send_email(
             subject=(
                 f'[Event enquiry: {event.title}] '
                 f'{serializer.validated_data["subject"]}'
             ),
             body=body,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            to=[event.organizer.email],
+            to_email=event.organizer.email,
+            heading="You have a new event enquiry",
+            action_label="View event",
+            action_url=(
+                f'{settings.FRONTEND_URL.rstrip("/")}/event/{event.pk}/event_name'
+            ),
             reply_to=[sender_email],
         )
-        email.send(fail_silently=False)
 
         return Response({"message": "Your message has been sent to the organizer."})
     

@@ -21,9 +21,30 @@ SECRET_KEY = os.getenv("SECRET_KEY")
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv("DEBUG") == "True"
 
-ALLOWED_HOSTS = ["teak-backend.onrender.com", "127.0.0.1", 
-                 "teak-backend.vercel.app", 
-                 "localhost:8000", "http://localhost:8000", "localhost"]
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv(
+        "ALLOWED_HOSTS",
+        "127.0.0.1,localhost,api.tickfirst.net,tickfirst.net,"
+        "teak-backend.vercel.app",
+    ).split(",")
+    if host.strip()
+]
+
+# Use project-specific cookie names so another Django app running on a
+# different localhost port cannot overwrite the admin form's CSRF cookie.
+CSRF_COOKIE_NAME = os.getenv("CSRF_COOKIE_NAME", "tickfirst_csrftoken")
+SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "tickfirst_sessionid")
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CSRF_TRUSTED_ORIGINS",
+        "http://localhost:8000,http://127.0.0.1:8000,"
+        "https://api.tickfirst.net,https://tickfirst.net,"
+        "https://www.tickfirst.net",
+    ).split(",")
+    if origin.strip()
+]
 
 # Application definition
 INSTALLED_APPS = [
@@ -95,7 +116,7 @@ STORAGES = {
         "BACKEND": "cloudinary_storage.storage.MediaCloudinaryStorage",
     },
     "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
     },
 }
 
@@ -193,7 +214,8 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:5175",
     "http://localhost:5176",
     "http://localhost:5177",
-    "https://ticket-system-frontend-ochre.vercel.app",
+    "https://tickfirst.net",
+    "https://www.tickfirst.net"
 ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -212,7 +234,14 @@ CORS_ALLOW_HEADERS = [
 ]
 
 
-FRONTEND_URL=os.getenv("FRONTEND_URL")
+FRONTEND_URL = os.getenv(
+    "FRONTEND_URL",
+    "http://localhost:5173" if DEBUG else "https://tickfirst.net",
+)
+PASSWORD_RESET_FRONTEND_URL = os.getenv(
+    "PASSWORD_RESET_FRONTEND_URL",
+    "http://localhost:5173" if DEBUG else "https://tickfirst.net",
+)
 
 PAYSTACK_SECRET_KEY=os.getenv("PAYSTACK_SECRET_KEY")
 PAYSTACK_CALLBACK_URL=f"{FRONTEND_URL}/payment-success"
@@ -226,29 +255,33 @@ SIMPLE_JWT = {
 }
 
 
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = "smtp.gmail.com"
-EMAIL_PORT = 465
-EMAIL_USE_SSL = True
-EMAIL_USE_TLS = False
-EMAIL_HOST_USER = "premiereleadtech@gmail.com"
-EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
-DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
-EMAIL_TIMEOUT = 60
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND",
+    "glob_utils.brevo_backend.BrevoEmailBackend",
+)
+BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
+BREVO_API_TIMEOUT = int(os.getenv("BREVO_API_TIMEOUT", "30"))
+BREVO_SENDER_NAME = os.getenv("BREVO_SENDER_NAME", "TickFirst")
+DEFAULT_FROM_EMAIL = os.getenv(
+    "DEFAULT_FROM_EMAIL",
+    f"{BREVO_SENDER_NAME} <hello@tickfirst.net>",
+)
+CONTACT_EMAIL = os.getenv("CONTACT_EMAIL", "hello@tickfirst.net")
+TICKET_PLATFORM_FEE_PERCENTAGE = os.getenv("TICKET_PLATFORM_FEE_PERCENTAGE", "5.00")
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/3.0/howto/static-files/
 
 
 # Add WhiteNoise to MIDDLEWARE (after SecurityMiddleware)
-
+STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
 
 MEDIA_ROOT = os.path.join(BASE_DIR, "media")
 MEDIA_URL = "/media/"
 
-STATIC_URL = '/static/'
+
 
 
 CLOUDINARY_STORAGE = {

@@ -3,20 +3,61 @@ from django.db import transaction
 from django.utils import timezone
 from events.models import TicketType
 from events.serializers import EventSerializer
-from .models import Order, OrderItem, Ticket
+from .models import Order, OrderItem, Ticket, WithdrawalRequest
 import uuid
 
 
 
+class OrderItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrderItem
+        fields = ["ticket_type", "quantity", "price"]
+
+
 class OrderSerializer(serializers.ModelSerializer):
+    items = OrderItemSerializer(many=True, read_only=True)
+    tickets_count = serializers.SerializerMethodField()
+    event_title = serializers.CharField(source="event.title", read_only=True)
+
     class Meta:
         model = Order
         fields = "__all__"
+        read_only_fields = [
+            "id",
+            "user",
+            "event",
+            "reference",
+            "total_amount",
+            "status",
+            "created_at",
+            "verified_at",
+        ]
+
+    def get_tickets_count(self, obj):
+        return sum(item.quantity for item in obj.items.all())
 
 class TicketSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ticket
         fields = "__all__"
+
+
+class WithdrawalRequestSerializer(serializers.ModelSerializer):
+    event_title = serializers.CharField(source="event.title", read_only=True)
+    organizer_name = serializers.SerializerMethodField()
+    organizer_email = serializers.EmailField(source="organizer.email", read_only=True)
+
+    class Meta:
+        model = WithdrawalRequest
+        fields = "__all__"
+        read_only_fields = [
+            "id", "organizer", "email", "gross_revenue", "fee_percentage",
+            "fee_amount", "amount", "status", "admin_note", "created_at",
+            "completed_at", "completed_by",
+        ]
+
+    def get_organizer_name(self, obj):
+        return obj.organizer.get_full_name() or obj.organizer.email
 
 
 class PurchasedTicketSerializer(serializers.ModelSerializer):

@@ -1,37 +1,34 @@
-import smtplib
-#from email.message import EmailMessage
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
+from django.template.loader import render_to_string
 
-def send_email(subject, body, to_email):
-    # msg = EmailMultiAlternatives()
-    # msg.set_content(body)
-    # msg["Subject"] = subject
-    # msg["From"] = settings.EMAIL_HOST_USER
-    # msg["To"] = to_email
-
-    # try:
-    #     with smtplib.SMTP_SSL(
-    #         settings.EMAIL_HOST,
-    #         settings.EMAIL_PORT,
-    #         timeout=settings.EMAIL_TIMEOUT,
-    #     ) as server:
-    #         server.login(settings.EMAIL_HOST_USER, settings.EMAIL_HOST_PASSWORD)
-    #         server.send_message(msg)
-    #     print("Email sent successfully!")
-    # except Exception as e:
-    #     print(f"Error: {e}")
+def send_email(
+    subject,
+    body,
+    to_email,
+    *,
+    heading=None,
+    action_label=None,
+    action_url=None,
+    reply_to=None,
+):
+    """Send a branded multipart email through Django's Brevo backend."""
+    recipients = [to_email] if isinstance(to_email, str) else list(to_email)
+    html = render_to_string("emails/notification.html", {
+        "preheader": subject,
+        "heading": heading or subject,
+        "body": body,
+        "action_label": action_label,
+        "action_url": action_url,
+        "frontend_url": settings.FRONTEND_URL.rstrip("/"),
+    })
 
     msg = EmailMultiAlternatives(
         subject=subject,
         body=body,
-        from_email=settings.EMAIL_HOST_USER,
-        to=to_email,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        to=recipients,
+        reply_to=reply_to or [],
     )
-   
-    try:
-        msg.mixed_subtype = "related"
-        msg.send(fail_silently=False)
-        print(f"email sent!")
-    except Exception as e:
-        print(f"Error: {e}")
+    msg.attach_alternative(html, "text/html")
+    msg.send(fail_silently=False)

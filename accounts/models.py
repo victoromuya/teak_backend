@@ -2,7 +2,7 @@
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
 from django.utils import timezone
-import random
+import secrets
 
 
 
@@ -100,6 +100,5 @@ class EmailOTP(models.Model):
 
     @staticmethod
     def generate_otp():
-        return str(random.randint(100000, 999999))
-
+        return f"{secrets.randbelow(900000) + 100000:06d}"
 

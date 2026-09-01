@@ -3,28 +3,58 @@
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.core.mail import send_mail
 from django.conf import settings
 from .utils.reset_tokens import generate_reset_token
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth.password_validation import validate_password
 from .utils.reset_tokens import verify_reset_token
-from .utils.email_tokens import generate_email_verification_token
 from django.contrib.auth import authenticate
 from django.contrib.auth import get_user_model
 from glob_utils.send_email import send_email
 from .models import CustomUser, EmailOTP
-from django.contrib.auth.hashers import make_password, check_password
+from django.contrib.auth.hashers import make_password
+from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta
-import random
 
 User = get_user_model()
+
+
+@transaction.atomic
+def issue_email_otp(*, email, purpose, first_name="", last_name=""):
+    """Replace any active code and send exactly the code stored for verification."""
+    EmailOTP.objects.filter(email=email, purpose=purpose, is_used=False).delete()
+    plain_otp = EmailOTP.generate_otp()
+    EmailOTP.objects.create(
+        email=email,
+        otp=make_password(plain_otp),
+        first_name=first_name,
+        last_name=last_name,
+        purpose=purpose,
+        expires_at=timezone.now() + timedelta(minutes=10),
+    )
+    send_email(
+        subject="Verify your email",
+        body=f"Your verification code is {plain_otp}. It expires in 10 minutes.",
+        to_email=email,
+    )
 
 
 
 class EmailCheckSerializer(serializers.Serializer):
     email = serializers.EmailField()
+
+
+class ContactSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=150)
+    email = serializers.EmailField()
+    subject = serializers.CharField(max_length=200)
+    message = serializers.CharField(min_length=20, max_length=5000)
+
+    def validate_subject(self, value):
+        if "\n" in value or "\r" in value:
+            raise serializers.ValidationError("Subject must not contain line breaks.")
+        return value
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -33,23 +63,25 @@ class RegisterSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['id', 'email', 'password', 'first_name', 'last_name', 'is_organizer']
+        read_only_fields = ['id', 'is_organizer']
 
     
     def validate_email(self, value):
-        if User.objects.filter(email=value).exists():
+        value = value.strip().lower()
+        if User.objects.filter(email__iexact=value).exists():
             raise serializers.ValidationError("A user with this email already exists.")
         return value
 
     def create(self, validated_data):
-        role = validated_data.pop("role", "user")
-
-        user = User.objects.create_user(**validated_data)
-
-        if role == "organizer":
-            user.is_organizer = True
-            user.save()
-
-        return user
+        with transaction.atomic():
+            user = User.objects.create_user(**validated_data)
+            issue_email_otp(
+                email=user.email,
+                purpose="registration",
+                first_name=user.first_name,
+                last_name=user.last_name,
+            )
+            return user
        
 
 class LoginSerializer(serializers.Serializer):
@@ -74,6 +106,11 @@ class LoginSerializer(serializers.Serializer):
         
         if not user.is_active:
             raise serializers.ValidationError({"detail": "This account is inactive."})
+
+        if not user.is_email_verified:
+            raise serializers.ValidationError({
+                "detail": "Verify your email address before logging in."
+            })
 
 
         # 2. Token Generation
@@ -119,6 +156,7 @@ class UserSerializer(serializers.ModelSerializer):
             "last_name",
             "is_organizer"
         ]
+        read_only_fields = ["id", "email", "is_organizer"]
 
 
 
@@ -136,20 +174,21 @@ class PasswordResetRequestSerializer(serializers.Serializer):
             return data  # do not reveal if email exists
 
         token = generate_reset_token(user)
-        print(token)
-
-        reset_link = f"{settings.FRONTEND_URL}/api/auth/password-reset/confirm?token={token}"
-        print(reset_link)
-
-        # send_mail(
-        #     subject="Reset your password",
-        #     message=f"Click the link to reset your password: {reset_link}",
-        #     from_email=settings.EMAIL_HOST_USER,
-        #     recipient_list=[email],
-        # )
+        reset_link = (
+            f"{settings.PASSWORD_RESET_FRONTEND_URL.rstrip('/')}/reset-password"
+            f"?token={token}"
+        )
         
-        send_email("Reset your password", 
-                   f"Click the link to reset your password: {reset_link}", email)
+        send_email(
+            "Reset your password",
+            "We received a request to reset your TickFirst password. "
+            "Use the secure button below to choose a new password. If you did "
+            "not request this, you can safely ignore this email.",
+            [email],
+            heading="Reset your password",
+            action_label="Reset password",
+            action_url=reset_link,
+        )
 
 
         return data
@@ -175,22 +214,24 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
         validate_password(data["new_password"])
 
         user.set_password(data["new_password"])
-        user.save()
+        user.is_email_verified = True
+        user.save(update_fields=["password", "is_email_verified"])
 
         return data
 
 
 class EmailVerificationRequestSerializer(serializers.Serializer):
     email = serializers.EmailField()
-    purpose=serializers.CharField()
-    first_name = serializers.CharField()
-    last_name=serializers.CharField()
+    purpose = serializers.ChoiceField(choices=("registration", "guest_checkout"))
+    first_name = serializers.CharField(required=False, allow_blank=True, default="")
+    last_name = serializers.CharField(required=False, allow_blank=True, default="")
 
     def validate(self, data):
         email = data["email"].lower()
-        purpose=data['purpose'].lower()
-        first_name=data["first_name"].lower()
-        last_name=data["last_name"].lower()
+        purpose = data["purpose"]
+        first_name = data["first_name"].strip()
+        last_name = data["last_name"].strip()
+        data["email"] = email
 
         # Don't reveal whether the email exists
         user = CustomUser.objects.filter(email=email).first()
@@ -198,33 +239,11 @@ class EmailVerificationRequestSerializer(serializers.Serializer):
         if user and user.is_email_verified:
             return data
 
-        # Generate a 6-digit OTP
-        otp = f"{random.randint(100000, 999999)}"
-       
-
-        # Remove any previous registration OTPs
-        EmailOTP.objects.filter(
+        issue_email_otp(
             email=email,
-            purpose=purpose
-        ).delete()
-
-        plain_otp = EmailOTP.generate_otp()
-        print(plain_otp)
-        # Save new OTP
-        EmailOTP.objects.create(
-            email=email,
-            otp=make_password(plain_otp),
             first_name=first_name,
             last_name=last_name,
             purpose=purpose,
-            expires_at=timezone.now() + timedelta(minutes=10),
-        )
-
-        # Send email
-        send_email(
-            subject="Verify your email",
-            body=f"Your verification code is {plain_otp}. It expires in 10 minutes.",
-            to_email=[email,],
         )
 
         return data
@@ -240,3 +259,6 @@ class VerifyEmailOTPSerializer(serializers.Serializer):
             ("guest_checkout", "Guest Checkout"),
         ]
     )
+
+    def validate_email(self, value):
+        return value.strip().lower()

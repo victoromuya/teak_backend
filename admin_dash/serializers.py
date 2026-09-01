@@ -11,17 +11,17 @@ class AdminLoginSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True)
 
     def validate(self, attrs):
-        email = attrs.get("email")
+        email = attrs.get("email", "").strip().lower()
         password = attrs.get("password")
 
         try:
-            User.objects.get(email=email)
+            account = User.objects.get(email__iexact=email)
         except User.DoesNotExist:
             raise serializers.ValidationError(
                 {"email": "No account found with this email address."}
             )
 
-        authenticated_user = authenticate(email=email, password=password)
+        authenticated_user = authenticate(email=account.email, password=password)
         if authenticated_user is None:
             raise serializers.ValidationError(
                 {"password": "The password you entered is incorrect."}
