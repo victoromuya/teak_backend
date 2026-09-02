@@ -7,6 +7,7 @@ from orders.models import Ticket
 # events/serializers.py
 
 class EventSerializer(serializers.ModelSerializer):
+    ticket_prices = serializers.SerializerMethodField(read_only=True)
     free_ticket_quantity = serializers.IntegerField(
         write_only=True,
         required=False,
@@ -19,6 +20,17 @@ class EventSerializer(serializers.ModelSerializer):
         read_only_fields = ['organizer', 'created_at', 'is_deleted']
         start_time = serializers.TimeField(format='%H:%M', input_formats=['%I:%M %p', '%H:%M'])
         end_time = serializers.TimeField(format='%H:%M', input_formats=['%I:%M %p', '%H:%M'])
+
+    def get_ticket_prices(self, event):
+        """Return the public pricing information needed by event listing cards."""
+        tickets = sorted(
+            event.ticket_types.all(),
+            key=lambda ticket: (ticket.price, ticket.id),
+        )
+        return [
+            {"name": ticket.name, "price": ticket.price}
+            for ticket in tickets
+        ]
 
     def validate(self, attrs):
         attrs = super().validate(attrs)

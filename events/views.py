@@ -46,7 +46,9 @@ class EventViewSet(ModelViewSet):
         # Keep newly published events visible near the top of public listings.
         # Without an explicit order, database row order is undefined and new
         # events could appear at the end of the homepage's event collection.
-        queryset = Event.objects.filter(is_deleted=False).order_by("-created_at", "-id")
+        queryset = Event.objects.filter(is_deleted=False).prefetch_related(
+            "ticket_types"
+        ).order_by("-created_at", "-id")
 
         upcoming_events = Q(is_active=True) & (
             Q(end_date__gte=today)
@@ -409,20 +411,3 @@ class TicketTypeViewSet(ModelViewSet):
             return [IsAuthenticated(), CanManageTicketType()]
 
         return super().get_permissions()
-
-
-
-
-    # def get_queryset(self):
-    #     return TicketType.objects.filter(
-    #         event__organizer=self.request.user
-    #     )
-
-    # def perform_create(self, serializer):
-    #     event_id = self.kwargs.get('event_id')
-    #     event = Event.objects.get(id=event_id)
-
-    #     if event.organizer != self.request.user:
-    #         raise PermissionDenied("Not your event")
-
-    #     serializer.save(event=event)

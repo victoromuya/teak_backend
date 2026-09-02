@@ -41,6 +41,8 @@ from events.models import Event
 from orders.models import Order, Ticket
 from rest_framework_simplejwt.tokens import RefreshToken
 from smtplib import SMTPException
+from django.core.exceptions import ImproperlyConfigured
+from requests import RequestException
 
 
 User = get_user_model()
@@ -200,7 +202,7 @@ class PasswordResetRequestView(APIView):
         try:
             if serializer.is_valid():
                 return Response({"message": "If the email exists, a reset link was sent"})
-        except (SMTPException, OSError):
+        except (SMTPException, OSError, RequestException, ImproperlyConfigured):
             return Response(
                 {"detail": "Reset email could not be sent. Please try again."},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,

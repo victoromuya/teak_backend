@@ -8,6 +8,7 @@ from rest_framework.test import APITestCase
 from datetime import timedelta
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
+from requests import HTTPError
 from smtplib import SMTPException
 
 from .models import EmailOTP
@@ -283,6 +284,41 @@ class AuthenticationEmailFlowTests(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(mail.outbox), 0)
+
+    def test_password_reset_email_lookup_is_case_insensitive(self):
+        user = get_user_model().objects.create_user(
+            email="case@example.com",
+            password="OldPassword123!",
+        )
+
+        response = self.client.post(
+            "/api/auth/password-reset/request/",
+            {"email": "CASE@EXAMPLE.COM"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, [user.email])
+
+    @patch("accounts.serializers.send_email", side_effect=HTTPError("Brevo rejected request"))
+    def test_password_reset_email_provider_failure_returns_json(self, send_email):
+        get_user_model().objects.create_user(
+            email="delivery-failure@example.com",
+            password="OldPassword123!",
+        )
+
+        response = self.client.post(
+            "/api/auth/password-reset/request/",
+            {"email": "delivery-failure@example.com"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(
+            response.data,
+            {"detail": "Reset email could not be sent. Please try again."},
+        )
 
     def test_legacy_api_reset_link_redirects_to_frontend(self):
         response = self.client.get(

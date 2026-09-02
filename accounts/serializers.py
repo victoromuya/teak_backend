@@ -165,12 +165,11 @@ class PasswordResetRequestSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
     def validate(self, data):
+        email = data["email"].strip().lower()
+        data["email"] = email
 
-        email = data["email"]
-
-        try:
-            user = User.objects.get(email=email)
-        except User.DoesNotExist:
+        user = User.objects.filter(email__iexact=email).first()
+        if user is None:
             return data  # do not reveal if email exists
 
         token = generate_reset_token(user)
@@ -183,8 +182,9 @@ class PasswordResetRequestSerializer(serializers.Serializer):
             "Reset your password",
             "We received a request to reset your TickFirst password. "
             "Use the secure button below to choose a new password. If you did "
-            "not request this, you can safely ignore this email.",
-            [email],
+            "not request this, you can safely ignore this email.\n\n"
+            f"{reset_link}",
+            user.email,
             heading="Reset your password",
             action_label="Reset password",
             action_url=reset_link,
