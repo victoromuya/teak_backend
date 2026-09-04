@@ -6,7 +6,7 @@ from django.db.models import Count, Q, Sum
 from django.shortcuts import get_object_or_404, redirect
 from django.http import HttpResponse
 from rest_framework.viewsets import ModelViewSet
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from .models import Order, OrderItem, Ticket, WithdrawalRequest
 from .serializers import (
@@ -48,6 +48,15 @@ def withdrawal_fee_percentage():
     except (InvalidOperation, TypeError):
         value = Decimal("5.00")
     return min(max(value, Decimal("0")), Decimal("100"))
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def platform_config(request):
+    """Return public, non-sensitive platform values used in customer-facing copy."""
+    return Response({
+        "ticket_platform_fee_percentage": withdrawal_fee_percentage(),
+    })
 
 
 def event_withdrawal_balance(event):
