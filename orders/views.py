@@ -281,8 +281,14 @@ class OrderViewSet(ModelViewSet):
                 order.verified_at = timezone.now()
                 order.save(update_fields=["status", "verified_at"])
 
-                # Generate QR tickets
-                tickets = generate_tickets(order)
+                # Online registrations receive the private link by email; the
+                # existing onsite QR-ticket flow remains unchanged.
+                if order.event.type == "ONLINE":
+                    from .notifications import send_online_event_email
+                    tickets = []
+                    transaction.on_commit(lambda: send_online_event_email(order))
+                else:
+                    tickets = generate_tickets(order)
 
             ticket_data = [
                 {
@@ -295,13 +301,19 @@ class OrderViewSet(ModelViewSet):
 
             return Response(
                 {
-                    "message": "Free ticket booked successfully.",
+                    "message": (
+                        "Registration successful. The private event link has been emailed to you."
+                        if order.event.type == "ONLINE"
+                        else "Free ticket booked successfully."
+                    ),
                     "order_id": order.id,
                     "order_reference": order.reference,
                     "reference": order.reference,
                     "status": order.status,
                     "tickets_count": len(ticket_data),
                     "tickets": ticket_data,
+                    "online_event": order.event.type == "ONLINE",
+                    "delivery": "email" if order.event.type == "ONLINE" else "qr_ticket",
                 },
                 status=status.HTTP_201_CREATED,
             )
@@ -667,6 +679,8 @@ def verify_payment(request, reference=None):
         "order_id": order.id,
         "order_reference": order.reference,
         "tickets": ticket_data,
+        "online_event": order.event.type == "ONLINE",
+        "delivery": "email" if order.event.type == "ONLINE" else "qr_ticket",
     })
 
 @api_view(["GET"])

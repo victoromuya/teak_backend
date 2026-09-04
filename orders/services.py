@@ -86,7 +86,7 @@ def finalize_paystack_payment(reference, payment_data):
             ticket_type.remaining -= item.quantity
             ticket_type.save(update_fields=["remaining"])
 
-        tickets = _generate_tickets(order, order_items)
+        tickets = [] if order.event.type == "ONLINE" else _generate_tickets(order, order_items)
         order.status = "paid"
         order.verified_at = timezone.now()
         order.save(update_fields=["status", "verified_at"])
@@ -118,10 +118,15 @@ def _generate_tickets(order, order_items):
 
 def _send_ticket_email(order_id):
     # Import lazily so the existing email renderer remains the single template.
+    from .notifications import send_online_event_email
     from .views import send_ticket_email
 
     try:
-        send_ticket_email(Order.objects.get(pk=order_id))
+        order = Order.objects.select_related("event", "user").get(pk=order_id)
+        if order.event.type == "ONLINE":
+            send_online_event_email(order)
+        else:
+            send_ticket_email(order)
     except Exception:
         # Fulfillment must not be rolled back or retried because email failed.
         pass

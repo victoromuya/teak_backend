@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+  <body style="margin:0;background:#f5f7fb;font-family:Arial,sans-serif;color:#172033">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+      <tr><td align="center" style="padding:32px 16px">
+        <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width:100%;background:#fff;border-radius:12px">
+          <tr><td style="padding:32px">
+            <h1 style="margin:0 0 12px;font-size:24px">{% if updated %}Your event link has changed{% else %}You're registered{% endif %}</h1>
+            <p style="line-height:1.6">Your private access details for <strong>{{ event.title }}</strong> are below.</p>
+            <p style="line-height:1.6"><strong>Platform:</strong> {{ event.meeting_platform }}</p>
+            <p style="margin:24px 0"><a href="{{ event.meeting_link }}" style="background:#2638ef;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none">Join online event</a></p>
+            <p style="word-break:break-all;color:#596174">{{ event.meeting_link }}</p>
+            <div style="margin-top:24px;padding:16px;background:#fff4e5;border-radius:8px;color:#7a4b00;line-height:1.5">
+              This event link is private. Do not share or forward it to anyone.
+            </div>
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>
+  </body>
+</html>

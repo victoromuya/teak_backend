@@ -2,11 +2,17 @@
 from rest_framework import serializers
 from rest_framework.exceptions import PermissionDenied
 from django.utils import timezone
+from django.db import transaction
+from django.core.validators import URLValidator
+from django.core.exceptions import ValidationError as DjangoValidationError
 from .models import TicketType, Event
 from orders.models import Ticket
 # events/serializers.py
 
 class EventSerializer(serializers.ModelSerializer):
+    meeting_link = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True, max_length=1000
+    )
     ticket_prices = serializers.SerializerMethodField(read_only=True)
     free_ticket_quantity = serializers.IntegerField(
         write_only=True,
@@ -31,6 +37,30 @@ class EventSerializer(serializers.ModelSerializer):
             {"name": ticket.name, "price": ticket.price}
             for ticket in tickets
         ]
+
+    def validate_meeting_link(self, value):
+        if not value:
+            return value
+        value = value.strip()
+        if not value.lower().startswith(("http://", "https://")):
+            value = f"https://{value}"
+        try:
+            URLValidator(schemes=["http", "https"])(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(
+                "Enter a valid meeting link, for example https://meet.google.com/abc-defg-hij."
+            ) from exc
+        return value
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if not (user and user.is_authenticated and (
+            user.is_staff or instance.organizer_id == user.id
+        )):
+            data.pop("meeting_link", None)
+        return data
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -78,6 +108,19 @@ class EventSerializer(serializers.ModelSerializer):
                 "than the start date."
             )
 
+        event_type = attrs.get("type", getattr(self.instance, "type", None))
+        meeting_platform = attrs.get(
+            "meeting_platform", getattr(self.instance, "meeting_platform", None)
+        )
+        meeting_link = attrs.get(
+            "meeting_link", getattr(self.instance, "meeting_link", None)
+        )
+        if event_type == "ONLINE":
+            if not meeting_platform:
+                errors["meeting_platform"] = "Choose or enter a video conferencing platform."
+            if not meeting_link:
+                errors["meeting_link"] = "Enter the private event meeting link."
+
         if errors:
             if start_date and end_date and end_date < start_date:
                 errors["message"] = (
@@ -96,10 +139,19 @@ class EventSerializer(serializers.ModelSerializer):
         return event
 
     def update(self, instance, validated_data):
+        previous_link = instance.meeting_link
         free_quantity = validated_data.pop("free_ticket_quantity", 100)
         event = super().update(instance, validated_data)
         self._ensure_free_ticket(event, free_quantity)
+        if event.type == "ONLINE" and event.meeting_link != previous_link:
+            event_id = event.pk
+            transaction.on_commit(lambda: self._email_updated_link(event_id))
         return event
+
+    @staticmethod
+    def _email_updated_link(event_id):
+        from orders.notifications import email_online_event_attendees
+        email_online_event_attendees(event_id, updated=True)
 
     @staticmethod
     def _ensure_free_ticket(event, quantity):
