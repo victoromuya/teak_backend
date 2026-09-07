@@ -266,7 +266,7 @@ DEFAULT_FROM_EMAIL = os.getenv(
     "DEFAULT_FROM_EMAIL",
     f"{BREVO_SENDER_NAME} <hello@tickfirst.net>",
 )
-CONTACT_EMAIL = os.getenv("CONTACT_EMAIL", "hello@tickfirst.net")
+CONTACT_EMAIL = os.getenv("CONTACT_EMAIL", "vakhaze@gmail.com")
 TICKET_PLATFORM_FEE_PERCENTAGE = os.getenv("TICKET_PLATFORM_FEE_PERCENTAGE", "5.00")
 
 # Static files (CSS, JavaScript, Images)

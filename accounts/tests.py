@@ -89,6 +89,7 @@ class ContactEndpointTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data["success"])
         self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ["vakhaze@gmail.com"])
         self.assertEqual(mail.outbox[0].reply_to, ["visitor@example.com"])
 
 
