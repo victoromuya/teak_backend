@@ -4,6 +4,8 @@ import dj_database_url
 from dotenv import load_dotenv
 from datetime import timedelta
 from pathlib import Path
+from decimal import Decimal, InvalidOperation
+from django.core.exceptions import ImproperlyConfigured
 
  # Load environment variables from .env file
 
@@ -26,7 +28,6 @@ ALLOWED_HOSTS = [
     for host in os.getenv(
         "ALLOWED_HOSTS",
         "127.0.0.1,localhost,api.tickfirst.net,tickfirst.net,"
-        "teak-backend.vercel.app",
     ).split(",")
     if host.strip()
 ]
@@ -267,7 +268,31 @@ DEFAULT_FROM_EMAIL = os.getenv(
     f"{BREVO_SENDER_NAME} <hello@tickfirst.net>",
 )
 CONTACT_EMAIL = os.getenv("CONTACT_EMAIL", "vakhaze@gmail.com")
-TICKET_PLATFORM_FEE_PERCENTAGE = os.getenv("TICKET_PLATFORM_FEE_PERCENTAGE", "5.00")
+try:
+    TICKET_PLATFORM_FEE_PERCENTAGE = Decimal(os.environ["TICKET_PLATFORM_FEE_PERCENTAGE"])
+    if not TICKET_PLATFORM_FEE_PERCENTAGE.is_finite() or not 0 <= TICKET_PLATFORM_FEE_PERCENTAGE <= 100:
+        raise ValueError
+except (KeyError, InvalidOperation, ValueError):
+    raise ImproperlyConfigured("Set TICKET_PLATFORM_FEE_PERCENTAGE to a number between 0 and 100.")
+
+# Standard Nigerian local online-payment pricing; override for the merchant's
+# contracted pricing. Paystack's automatic "Pass fees" setting must be off.
+try:
+    PAYSTACK_FEE_PERCENTAGE = Decimal(os.getenv("PAYSTACK_FEE_PERCENTAGE", "1.5"))
+    PAYSTACK_FEE_FLAT_AMOUNT = Decimal(os.getenv("PAYSTACK_FEE_FLAT_AMOUNT", "100.00"))
+    PAYSTACK_FEE_FLAT_THRESHOLD = Decimal(os.getenv("PAYSTACK_FEE_FLAT_THRESHOLD", "2500.00"))
+    PAYSTACK_FEE_CAP = Decimal(os.getenv("PAYSTACK_FEE_CAP", "2000.00"))
+    if not all(value.is_finite() and value >= 0 for value in (
+        PAYSTACK_FEE_PERCENTAGE, PAYSTACK_FEE_FLAT_AMOUNT,
+        PAYSTACK_FEE_FLAT_THRESHOLD, PAYSTACK_FEE_CAP,
+    )) or PAYSTACK_FEE_PERCENTAGE >= 100:
+        raise ValueError
+    if any(value != value.quantize(Decimal("0.01")) for value in (
+        PAYSTACK_FEE_FLAT_AMOUNT, PAYSTACK_FEE_FLAT_THRESHOLD, PAYSTACK_FEE_CAP,
+    )):
+        raise ValueError
+except (InvalidOperation, ValueError):
+    raise ImproperlyConfigured("Invalid Paystack fee configuration: use non-negative amounts and a percentage below 100.")
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/3.0/howto/static-files/

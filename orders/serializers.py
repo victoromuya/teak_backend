@@ -4,6 +4,7 @@ from django.utils import timezone
 from events.models import TicketType
 from events.serializers import EventSerializer
 from .models import Order, OrderItem, Ticket, WithdrawalRequest
+from .processing_fees import payment_breakdown
 import uuid
 
 
@@ -97,7 +98,7 @@ class PurchasedTicketSerializer(serializers.ModelSerializer):
 
 class OrderItemInputSerializer(serializers.Serializer):
     ticket_type = serializers.IntegerField()
-    quantity = serializers.IntegerField()
+    quantity = serializers.IntegerField(min_value=1)
 
 
 class OrderCreateSerializer(serializers.Serializer):
@@ -162,12 +163,17 @@ class OrderCreateSerializer(serializers.Serializer):
                 total_amount += ticket.price * item["quantity"]
 
             reference = str(uuid.uuid4())
+            processing_fee, payment_amount = payment_breakdown(total_amount)
+            if payment_amount >= 10 ** 10:
+                raise serializers.ValidationError("Order total exceeds the supported payment amount.")
 
             order = Order.objects.create(
                 user=user,
                 event_id=validated_data["event"],
                 reference=reference,
                 total_amount=total_amount,
+                processing_fee=processing_fee,
+                payment_amount=payment_amount,
                 status="pending",
             )
 

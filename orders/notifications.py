@@ -21,7 +21,7 @@ def send_online_event_email(order, updated=False):
     )
     html = render_to_string(
         "emails/online_event_link.html",
-        {"order": order, "event": event, "updated": updated},
+        {"order": order, "event": event, "updated": updated, "frontend_url": settings.FRONTEND_URL.rstrip("/")},
     )
     message = EmailMultiAlternatives(
         subject, text, settings.DEFAULT_FROM_EMAIL, [order.user.email]

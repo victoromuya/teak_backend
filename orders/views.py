@@ -1,6 +1,7 @@
 import csv
+from urllib.parse import urlencode
 import requests
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from django.conf import settings
 from django.db.models import Count, Q, Sum
 from django.shortcuts import get_object_or_404, redirect
@@ -43,11 +44,7 @@ from accounts.permissions import IsAdmin
 
 
 def withdrawal_fee_percentage():
-    try:
-        value = Decimal(str(settings.TICKET_PLATFORM_FEE_PERCENTAGE))
-    except (InvalidOperation, TypeError):
-        value = Decimal("5.00")
-    return min(max(value, Decimal("0")), Decimal("100"))
+    return Decimal(str(settings.TICKET_PLATFORM_FEE_PERCENTAGE))
 
 
 @api_view(["GET"])
@@ -60,12 +57,13 @@ def platform_config(request):
 
 
 def event_withdrawal_balance(event):
-    gross = Order.objects.filter(event=event, status="paid").aggregate(
-        total=Sum("total_amount")
-    )["total"] or Decimal("0.00")
+    totals = Order.objects.filter(event=event, status="paid").aggregate(
+        gross=Sum("total_amount"), net=Sum("organizer_revenue"), fee=Sum("platform_revenue"),
+    )
+    gross = totals["gross"] or Decimal("0.00")
     fee_percentage = withdrawal_fee_percentage()
-    fee_amount = (gross * fee_percentage / Decimal("100")).quantize(Decimal("0.01"))
-    net = gross - fee_amount
+    fee_amount = totals["fee"] or Decimal("0.00")
+    net = totals["net"] or Decimal("0.00")
     pending_amount = WithdrawalRequest.objects.filter(
         event=event, status="pending"
     ).aggregate(total=Sum("amount"))["total"] or Decimal("0.00")
@@ -231,7 +229,7 @@ class OrderViewSet(ModelViewSet):
 
         if user.is_staff:
             return Order.objects.all()
-        if self.action == "destroy" and getattr(user, "is_organizer", False):
+        if self.action in ["retrieve", "destroy"] and getattr(user, "is_organizer", False):
             return Order.objects.filter(
                 Q(user=user) | Q(event__organizer=user)
             ).distinct()
@@ -323,6 +321,9 @@ class OrderViewSet(ModelViewSet):
                     "tickets": ticket_data,
                     "online_event": order.event.type == "ONLINE",
                     "delivery": "email" if order.event.type == "ONLINE" else "qr_ticket",
+                    "total_amount": order.total_amount,
+                    "processing_fee": order.processing_fee,
+                    "payment_amount": order.payment_amount,
                 },
                 status=status.HTTP_201_CREATED,
             )
@@ -339,7 +340,8 @@ class OrderViewSet(ModelViewSet):
             },
             json={
                 "email": request.user.email,
-                "amount": int(order.total_amount * 100),
+                "amount": int(order.payment_amount * 100),
+                "currency": "NGN",
                 "reference": order.reference,
                 "callback_url": settings.PAYSTACK_CALLBACK_URL,
             },
@@ -361,6 +363,9 @@ class OrderViewSet(ModelViewSet):
                 "order_id": order.id,
                 "payment_url": data["data"]["authorization_url"],
                 "reference": order.reference,
+                "total_amount": order.total_amount,
+                "processing_fee": order.processing_fee,
+                "payment_amount": order.payment_amount,
             },
             status=status.HTTP_201_CREATED,
         )
@@ -542,6 +547,7 @@ class OrderViewSet(ModelViewSet):
             row["event_id"]: row
             for row in paid_orders.values("event_id").annotate(
                 total_revenue=Sum("total_amount"),
+                net_revenue=Sum("organizer_revenue"),
                 total_paid_orders=Count("id"),
             )
         }
@@ -560,6 +566,12 @@ class OrderViewSet(ModelViewSet):
             .values("created_at__month")
             .annotate(total=Sum("total_amount"))
         }
+        net_revenue_by_month = {
+            row["created_at__month"]: row["total"]
+            for row in paid_orders.filter(created_at__year=current_year)
+            .values("created_at__month")
+            .annotate(total=Sum("organizer_revenue"))
+        }
         tickets_by_month = {
             row["created_at__month"]: row["total"]
             for row in Ticket.objects.filter(
@@ -573,6 +585,7 @@ class OrderViewSet(ModelViewSet):
 
         event_summaries = []
         total_revenue = Decimal("0.00")
+        net_revenue = Decimal("0.00")
         total_paid_orders = 0
         total_tickets_sold = 0
 
@@ -585,6 +598,8 @@ class OrderViewSet(ModelViewSet):
             event_paid_orders = event_order_stats.get("total_paid_orders", 0)
             event_tickets_sold = ticket_stats.get(event["id"], 0)
 
+            event_net = event_order_stats.get("net_revenue") or Decimal("0.00")
+            net_revenue += event_net
             total_revenue += event_revenue
             total_paid_orders += event_paid_orders
             total_tickets_sold += event_tickets_sold
@@ -594,6 +609,7 @@ class OrderViewSet(ModelViewSet):
                     "event_id": event["id"],
                     "event_title": event["title"],
                     "total_revenue": event_revenue,
+                    "net_revenue": event_net,
                     "total_paid_orders": event_paid_orders,
                     "total_tickets_sold": event_tickets_sold,
                 }
@@ -603,6 +619,8 @@ class OrderViewSet(ModelViewSet):
             {
                 "total_events": len(events),
                 "total_revenue": total_revenue,
+                "net_revenue": net_revenue,
+                "monthly_net_revenue": [net_revenue_by_month.get(month, Decimal("0.00")) for month in range(1, 13)],
                 "total_paid_orders": total_paid_orders,
                 "total_tickets_sold": total_tickets_sold,
                 "monthly_revenue": [
@@ -688,6 +706,9 @@ def verify_payment(request, reference=None):
         "order_id": order.id,
         "order_reference": order.reference,
         "tickets": ticket_data,
+        "total_amount": order.total_amount,
+        "processing_fee": order.processing_fee,
+        "payment_amount": order.payment_amount,
         "online_event": order.event.type == "ONLINE",
         "delivery": "email" if order.event.type == "ONLINE" else "qr_ticket",
     })
@@ -745,23 +766,38 @@ def send_ticket_email(order):
     subject = "Your Ticket Confirmation"
     from_email = settings.DEFAULT_FROM_EMAIL
     recipient_list = [order.user.email]
+    event_location = ", ".join(
+        value.strip() for value in (
+            order.event.address, order.event.city, order.event.state, order.event.country,
+        ) if value and value.strip()
+    )
+    directions_url = (
+        "https://www.google.com/maps/dir/?" + urlencode({"api": "1", "destination": event_location})
+        if event_location and order.event.type != "ONLINE" else None
+    )
 
     text_content = f"""
 Hi,
 
-Your payment was successful.
+Your booking is confirmed.
 
 Order Reference: {order.reference}
 Tickets: {tickets.count()}
 
-Please view this email in HTML to see your QR codes.
+Your QR tickets are attached to this email. Keep them private and present them at entry.
 """
+    if event_location:
+        text_content += f"\nLocation: {event_location}\n"
+    if directions_url:
+        text_content += f"Get directions: {directions_url}\n"
 
     html_content = render_to_string("emails/ticket_confirmation.html", {
         "order": order,
         "tickets": tickets,
         "ticket_count": tickets.count(),
         "frontend_url": settings.FRONTEND_URL.rstrip("/"),
+        "event_location": event_location,
+        "directions_url": directions_url,
     })
 
     msg = EmailMultiAlternatives(

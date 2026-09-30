@@ -93,6 +93,10 @@ class OrganizerProfileView(APIView):
             status="paid"
         ).aggregate(total=Sum('total_amount'))['total'] or 0
 
+        net_revenue = Order.objects.filter(
+            event__organizer=request.user, status="paid"
+        ).aggregate(total=Sum("organizer_revenue"))["total"] or 0
+
         upcoming_events = events.filter(
             start_date__gte=timezone.now()
         ).count()
@@ -103,6 +107,7 @@ class OrganizerProfileView(APIView):
                 "total_events": total_events,
                 "tickets_sold": total_tickets_sold,
                 "total_revenue": total_revenue,
+                "net_revenue": net_revenue,
                 "upcoming_events": upcoming_events,
             }
         })

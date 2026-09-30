@@ -20,9 +20,31 @@ class Order(models.Model):
     event = models.ForeignKey(Event, on_delete=models.PROTECT, default=1)
     reference = models.CharField(max_length=100, unique=True, default="aaa")
     total_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    processing_fee = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal("0.00"), editable=False)
+    payment_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, editable=False)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
     created_at = models.DateTimeField(auto_now_add=True)
     verified_at = models.DateTimeField(null=True, blank=True)
+    organizer_revenue = models.DecimalField(max_digits=12, decimal_places=2, null=True, editable=False)
+    platform_revenue = models.DecimalField(max_digits=12, decimal_places=2, null=True, editable=False)
+
+    def save(self, *args, **kwargs):
+        if self.payment_amount is None:
+            self.payment_amount = Decimal(self.total_amount) + Decimal(self.processing_fee)
+            if kwargs.get("update_fields") is not None:
+                kwargs["update_fields"] = set(kwargs["update_fields"]) | {"payment_amount"}
+        # A paid order is the wallet credit. Snapshot once so later reads and
+        # duplicate payment notifications cannot credit it again.
+        if self.status == "paid" and self.organizer_revenue is None:
+            from .revenue import split_revenue
+
+            items = [] if self._state.adding else self.items.all()
+            self.organizer_revenue, self.platform_revenue = split_revenue(self.total_amount, items)
+            if kwargs.get("update_fields") is not None:
+                kwargs["update_fields"] = set(kwargs["update_fields"]) | {
+                    "organizer_revenue", "platform_revenue",
+                }
+        super().save(*args, **kwargs)
 
     def is_expired(self):
         return (

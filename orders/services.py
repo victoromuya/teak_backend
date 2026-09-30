@@ -52,7 +52,7 @@ def finalize_paystack_payment(reference, payment_data):
 
         try:
             paid_amount = int(payment_data["amount"])
-            expected_amount = int(Decimal(order.total_amount) * Decimal("100"))
+            expected_amount = int(Decimal(order.payment_amount) * Decimal("100"))
         except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
             raise InvalidPaymentError("Invalid payment amount") from exc
         if paid_amount != expected_amount:

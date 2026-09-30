@@ -26,7 +26,7 @@ from .services import InvalidPaymentError, finalize_paystack_payment
 
 @override_settings(
     EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
-    TICKET_PLATFORM_FEE_PERCENTAGE="10.00",
+    TICKET_PLATFORM_FEE_PERCENTAGE="6.00",
 )
 class WithdrawalRequestTests(APITestCase):
     def setUp(self):
@@ -67,9 +67,9 @@ class WithdrawalRequestTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         withdrawal = WithdrawalRequest.objects.get()
         self.assertEqual(withdrawal.gross_revenue, Decimal("10000.00"))
-        self.assertEqual(withdrawal.fee_percentage, Decimal("10.00"))
-        self.assertEqual(withdrawal.fee_amount, Decimal("1000.00"))
-        self.assertEqual(withdrawal.amount, Decimal("9000.00"))
+        self.assertEqual(withdrawal.fee_percentage, Decimal("6.00"))
+        self.assertEqual(withdrawal.fee_amount, Decimal("600.00"))
+        self.assertEqual(withdrawal.amount, Decimal("9400.00"))
         self.assertEqual(withdrawal.email, self.organizer.email)
         self.assertEqual(len(mail.outbox), 1)
 
@@ -81,6 +81,78 @@ class WithdrawalRequestTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
         self.assertEqual(WithdrawalRequest.objects.count(), 1)
+
+    def test_balance_credits_only_94_percent_of_paid_sales(self):
+        from .views import event_withdrawal_balance
+
+        balance = event_withdrawal_balance(self.event)
+        self.assertEqual(balance["gross_revenue"], Decimal("10000.00"))
+        self.assertEqual(balance["net_revenue"], Decimal("9400.00"))
+        self.assertEqual(balance["fee_amount"], Decimal("600.00"))
+        self.assertEqual(balance["available_amount"], Decimal("9400.00"))
+        self.assertIsNone(Order.objects.get(status="pending").organizer_revenue)
+
+    @override_settings(TICKET_PLATFORM_FEE_PERCENTAGE="5.00")
+    def test_configured_fee_changes_new_sales_but_preserves_paid_sales(self):
+        from .views import event_withdrawal_balance
+
+        self.assertEqual(event_withdrawal_balance(self.event)["net_revenue"], Decimal("9400.00"))
+        response = self.client.get("/api/platform-config/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["ticket_platform_fee_percentage"], Decimal("5.00"))
+        pending = Order.objects.get(status="pending")
+        pending.status = "paid"
+        pending.save(update_fields=["status"])
+        pending.refresh_from_db()
+        self.assertEqual(pending.organizer_revenue, Decimal("4750.00"))
+        self.assertEqual(pending.platform_revenue, Decimal("250.00"))
+        self.assertEqual(event_withdrawal_balance(self.event)["net_revenue"], Decimal("14150.00"))
+
+    def test_migration_backfills_paid_sales_without_changing_withdrawals(self):
+        from importlib import import_module
+        from django.apps import apps
+        from django.db import connection
+        from types import SimpleNamespace
+
+        self.client.force_authenticate(self.organizer)
+        self.client.post("/api/withdrawals/", self.payload, format="json")
+        withdrawal = WithdrawalRequest.objects.get()
+        Order.objects.update(organizer_revenue=None, platform_revenue=None)
+        migration = import_module("orders.migrations.0005_order_revenue_split")
+        migration.backfill_revenue(apps, SimpleNamespace(connection=connection))
+        paid = Order.objects.get(status="paid")
+        self.assertEqual(paid.organizer_revenue, Decimal("9400.00"))
+        self.assertEqual(paid.platform_revenue, Decimal("600.00"))
+        self.assertIsNone(Order.objects.get(status="pending").organizer_revenue)
+        withdrawal.refresh_from_db()
+        self.assertEqual(withdrawal.amount, Decimal("9400.00"))
+
+    def test_split_rounds_per_ticket_and_preserves_gross(self):
+        from types import SimpleNamespace
+        from .revenue import split_revenue
+
+        organizer, platform = split_revenue(
+            Decimal("0.18"), [SimpleNamespace(price=Decimal("0.09"), quantity=2)]
+        )
+        self.assertEqual(organizer, Decimal("0.16"))
+        self.assertEqual(platform, Decimal("0.02"))
+        self.assertEqual(organizer + platform, Decimal("0.18"))
+        self.assertEqual(split_revenue(Decimal("0"), []), (Decimal("0.00"), Decimal("0.00")))
+
+    def test_existing_payouts_are_reserved_against_new_earnings(self):
+        from .views import event_withdrawal_balance
+
+        self.client.force_authenticate(self.organizer)
+        self.client.post("/api/withdrawals/", self.payload, format="json")
+        # Preserve a payout requested under the previous 95% policy.
+        WithdrawalRequest.objects.update(amount=Decimal("9500.00"))
+        self.assertEqual(event_withdrawal_balance(self.event)["available_amount"], Decimal("0.00"))
+        pending = Order.objects.get(status="pending")
+        pending.status = "paid"
+        pending.save(update_fields=["status"])
+        self.assertEqual(event_withdrawal_balance(self.event)["available_amount"], Decimal("4600.00"))
+        WithdrawalRequest.objects.update(status="completed")
+        self.assertEqual(event_withdrawal_balance(self.event)["available_amount"], Decimal("4600.00"))
 
     def test_admin_completes_request_and_sends_email(self):
         self.client.force_authenticate(self.organizer)
@@ -101,7 +173,7 @@ class WithdrawalRequestTests(APITestCase):
         )
         history = self.client.get("/api/withdrawals/")
         self.assertEqual(balance.data["available_amount"], Decimal("0.00"))
-        self.assertEqual(balance.data["withdrawn_amount"], Decimal("9000.00"))
+        self.assertEqual(balance.data["withdrawn_amount"], Decimal("9400.00"))
         self.assertEqual(len(history.data), 1)
         self.assertEqual(history.data[0]["status"], "completed")
 
@@ -425,6 +497,27 @@ class OrganizerOrderReportingTests(APITestCase):
         )
         self.create_tickets(other_order, other_ticket_type, 1)
 
+    def test_organizer_can_retrieve_order_for_owned_event(self):
+        self.client.force_authenticate(self.organizer)
+        order = Order.objects.get(reference="organizer-first-paid")
+        response = self.client.get(f"/api/orders/{order.pk}/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["reference"], order.reference)
+        self.assertEqual(Decimal(response.data["organizer_revenue"]), order.organizer_revenue)
+
+    def test_organizer_cannot_retrieve_another_organizers_order(self):
+        self.client.force_authenticate(self.organizer)
+        order = Order.objects.get(reference="other-organizer-paid")
+        self.assertEqual(self.client.get(f"/api/orders/{order.pk}/").status_code, 404)
+
+    def test_customer_still_retrieves_own_order_only(self):
+        order = Order.objects.get(reference="organizer-first-paid")
+        self.client.force_authenticate(self.buyer)
+        self.assertEqual(self.client.get(f"/api/orders/{order.pk}/").status_code, 200)
+        stranger = get_user_model().objects.create_user(email="order-stranger@example.com", password="password")
+        self.client.force_authenticate(stranger)
+        self.assertEqual(self.client.get(f"/api/orders/{order.pk}/").status_code, 404)
+
     def create_event(self, organizer, title):
         return Event.objects.create(
             organizer=organizer,
@@ -498,10 +591,12 @@ class OrganizerOrderReportingTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["total_events"], 2)
         self.assertEqual(response.data["total_revenue"], Decimal("400.00"))
+        self.assertEqual(response.data["net_revenue"], Decimal("376.00"))
         self.assertEqual(response.data["total_paid_orders"], 2)
         self.assertEqual(response.data["total_tickets_sold"], 3)
         current_month = timezone.localdate().month - 1
         self.assertEqual(response.data["monthly_revenue"][current_month], Decimal("400.00"))
+        self.assertEqual(response.data["monthly_net_revenue"][current_month], Decimal("376.00"))
         self.assertEqual(response.data["monthly_tickets_sold"][current_month], 3)
         self.assertEqual(len(response.data["events"]), 2)
 
@@ -775,6 +870,10 @@ class PaystackFinalizationTests(APITestCase):
         self.assertFalse(second_finalized)
         self.assertEqual(order.pk, second_order.pk)
         self.assertEqual(order.status, "paid")
+        self.assertEqual(second_order.organizer_revenue, Decimal("94.00"))
+        self.assertEqual(second_order.platform_revenue, Decimal("6.00"))
+        from .views import event_withdrawal_balance
+        self.assertEqual(event_withdrawal_balance(self.event)["available_amount"], Decimal("94.00"))
         self.assertEqual(self.ticket_type.remaining, 8)
         self.assertEqual(len(tickets), 2)
         self.assertEqual(len(second_tickets), 2)
@@ -791,6 +890,7 @@ class PaystackFinalizationTests(APITestCase):
         self.order.refresh_from_db()
         self.ticket_type.refresh_from_db()
         self.assertEqual(self.order.status, "pending")
+        self.assertIsNone(self.order.organizer_revenue)
         self.assertEqual(self.ticket_type.remaining, 10)
         generate_tickets.assert_not_called()
 
