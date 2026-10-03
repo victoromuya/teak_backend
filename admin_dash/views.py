@@ -18,6 +18,7 @@ from orders.models import Order, Ticket, WithdrawalRequest
 from orders.serializers import OrderSerializer, TicketSerializer
 
 from .serializers import AdminLoginSerializer
+from accounts.throttles import AuthThrottle, AuthEmailThrottle
 
 
 User = get_user_model()
@@ -29,6 +30,7 @@ User = get_user_model()
     request=AdminLoginSerializer,
 )
 class AdminLoginView(APIView):
+    throttle_classes = [AuthThrottle, AuthEmailThrottle]
     authentication_classes = []
     permission_classes = []
 
@@ -129,7 +131,7 @@ class AdminDashboardView(APIView):
         total_users = User.objects.count()
         total_organizers = User.objects.filter(is_organizer=True).count()
         total_events = Event.objects.count()
-        total_orders = Order.objects.count()
+        total_orders = Order.objects.filter(status="paid").count()
         pending_withdrawals = WithdrawalRequest.objects.filter(status="pending").count()
 
         total_revenue = Order.objects.aggregate(total=Sum("total_amount"))["total"] or 0

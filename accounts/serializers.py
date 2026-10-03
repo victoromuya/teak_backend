@@ -20,6 +20,17 @@ from datetime import timedelta
 User = get_user_model()
 
 
+def send_account_access_email(user):
+    send_email(
+        subject="Continue with TickFirst",
+        body="Sign in to continue. If you need help accessing your account, use the password reset option on the sign-in page.",
+        to_email=user.email,
+        heading="Continue with TickFirst",
+        action_label="Sign in",
+        action_url=f"{settings.FRONTEND_URL.rstrip('/')}/login",
+    )
+
+
 @transaction.atomic
 def issue_email_otp(*, email, purpose, first_name="", last_name=""):
     """Replace any active code and send exactly the code stored for verification."""
@@ -58,6 +69,7 @@ class ContactSerializer(serializers.Serializer):
 
 
 class RegisterSerializer(serializers.ModelSerializer):
+    email = serializers.EmailField(max_length=254)
     password = serializers.CharField(write_only=True)
 
     class Meta:
@@ -67,14 +79,21 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     
     def validate_email(self, value):
-        value = value.strip().lower()
-        if User.objects.filter(email__iexact=value).exists():
-            raise serializers.ValidationError("A user with this email already exists.")
-        return value
+        return value.strip().lower()
 
     def create(self, validated_data):
         with transaction.atomic():
-            user = User.objects.create_user(**validated_data)
+            email = validated_data.pop("email")
+            password = make_password(validated_data.pop("password"))
+            user = User.objects.filter(email__iexact=email).first()
+            created = False
+            if user is None:
+                user, created = User.objects.get_or_create(
+                    email=email, defaults={**validated_data, "password": password},
+                )
+            if not created:
+                send_account_access_email(user)
+                return user
             issue_email_otp(
                 email=user.email,
                 purpose="registration",
@@ -82,6 +101,11 @@ class RegisterSerializer(serializers.ModelSerializer):
                 last_name=user.last_name,
             )
             return user
+
+    def validate(self, attrs):
+        candidate = User(email=attrs["email"], first_name=attrs.get("first_name", ""), last_name=attrs.get("last_name", ""))
+        validate_password(attrs["password"], user=candidate)
+        return attrs
        
 
 class LoginSerializer(serializers.Serializer):
@@ -91,18 +115,14 @@ class LoginSerializer(serializers.Serializer):
     
 
     def validate(self, data):
-        email = data.get('email')
+        email = data.get('email').strip().lower()
         password = data.get('password')
 
         # 1. Validation Logic
-        try:
-            user = User.objects.get(email=email)
-        except User.DoesNotExist:
-            raise serializers.ValidationError({"email": "No account found with this email address."})
-
-        authenticated_user = authenticate(email=email, password=password)
+        user = User.objects.filter(email__iexact=email).first()
+        authenticated_user = authenticate(email=user.email if user else email, password=password)
         if authenticated_user is None:
-            raise serializers.ValidationError({"password": "The password you entered is incorrect."})
+            raise serializers.ValidationError({"detail": "Invalid email or password."})
         
         if not user.is_active:
             raise serializers.ValidationError({"detail": "This account is inactive."})
@@ -199,6 +219,7 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
     token = serializers.CharField()
     new_password = serializers.CharField()
 
+    @transaction.atomic
     def validate(self, data):
 
         user_id = verify_reset_token(data["token"])
@@ -207,11 +228,13 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
             raise serializers.ValidationError("Invalid or expired token")
 
         try:
-            user = User.objects.get(id=user_id)
+            user = User.objects.select_for_update().get(id=user_id)
         except User.DoesNotExist:
             raise serializers.ValidationError("User not found")
 
-        validate_password(data["new_password"])
+        if verify_reset_token(data["token"]) != user.pk:
+            raise serializers.ValidationError("Invalid or expired token")
+        validate_password(data["new_password"], user=user)
 
         user.set_password(data["new_password"])
         user.is_email_verified = True
@@ -234,9 +257,16 @@ class EmailVerificationRequestSerializer(serializers.Serializer):
         data["email"] = email
 
         # Don't reveal whether the email exists
-        user = CustomUser.objects.filter(email=email).first()
+        user = CustomUser.objects.filter(email__iexact=email).first()
+
+        if user and purpose == "guest_checkout":
+            # Existing accounts must authenticate normally; disclose next steps
+            # only to the email owner, never through a public existence check.
+            send_account_access_email(user)
+            return data
 
         if user and user.is_email_verified:
+            send_account_access_email(user)
             return data
 
         issue_email_otp(

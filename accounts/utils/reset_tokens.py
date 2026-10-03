@@ -43,5 +43,5 @@ def verify_reset_token(token):
 
     except jwt.ExpiredSignatureError:
         return None
-    except jwt.InvalidTokenError:
+    except (jwt.InvalidTokenError, KeyError, TypeError, ValueError):
         return None

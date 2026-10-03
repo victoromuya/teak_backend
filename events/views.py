@@ -25,6 +25,8 @@ from orders.models import Ticket
 from orders.serializers import TicketScanSerializer
 from orders.permissions import CanScanTicket
 from django.utils import timezone
+from accounts.throttles import AuthThrottle, AuthUserThrottle
+from .throttles import EnquiryRecipientThrottle
 
 @extend_schema(
     tags=["Events"],
@@ -34,6 +36,12 @@ class EventViewSet(ModelViewSet):
     queryset = Event.objects.filter(is_deleted=False)
     serializer_class = EventSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
+    auth_limit_group = "enquiry"
+
+    def get_throttles(self):
+        if self.action == "contact_organizer":
+            return [AuthThrottle(), AuthUserThrottle(), EnquiryRecipientThrottle()]
+        return super().get_throttles()
 
     def get_queryset(self):
         user = self.request.user
@@ -217,6 +225,10 @@ class EventViewSet(ModelViewSet):
     def tickets(self, request, pk=None):
         event = self.get_object()
         queryset = TicketType.objects.filter(event=event)
+        if not (request.user.is_authenticated and (
+            request.user.is_staff or event.organizer_id == request.user.id
+        )):
+            queryset = queryset.filter(is_active=True)
 
         page = self.paginate_queryset(queryset)
         if page is not None:
@@ -372,10 +384,17 @@ class EventViewSet(ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        ticket.is_used = True
-        ticket.scanned_at = timezone.now()
-        ticket.scanned_by = request.user
-        ticket.save()
+        # A single conditional write prevents two scanners admitting one ticket.
+        scanned_at = timezone.now()
+        updated = Ticket.objects.filter(pk=ticket.pk, is_used=False).update(
+            is_used=True, scanned_at=scanned_at, scanned_by=request.user,
+        )
+        if not updated:
+            return Response(
+                {"success": False, "message": "Ticket has already been scanned."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        ticket.scanned_at = scanned_at
 
         return Response(
             {
@@ -401,6 +420,20 @@ class TicketTypeViewSet(ModelViewSet):
     queryset = TicketType.objects.all()
     serializer_class = TicketTypeSerializer
     permission_classes = [IsAuthenticatedOrReadOnly]
+
+    def get_queryset(self):
+        user = self.request.user
+        queryset = super().get_queryset()
+        if user.is_authenticated and user.is_staff:
+            return queryset
+        today = timezone.localdate()
+        visible = Q(is_active=True, event__is_deleted=False, event__is_active=True) & (
+            Q(event__end_date__gte=today)
+            | Q(event__end_date__isnull=True, event__start_date__gte=today)
+        )
+        if user.is_authenticated and getattr(user, "is_organizer", False):
+            visible |= Q(event__organizer=user)
+        return queryset.filter(visible)
 
     def get_permissions(self):
 

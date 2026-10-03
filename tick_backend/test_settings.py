@@ -12,6 +12,7 @@ test_database_url = os.getenv(
 DATABASES = {"default": dj_database_url.parse(test_database_url)}
 
 EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+SECURE_SSL_REDIRECT = False
 PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 
 STORAGES = {

@@ -30,7 +30,7 @@ class EventSerializer(serializers.ModelSerializer):
     def get_ticket_prices(self, event):
         """Return the public pricing information needed by event listing cards."""
         tickets = sorted(
-            event.ticket_types.all(),
+            (ticket for ticket in event.ticket_types.all() if ticket.is_active),
             key=lambda ticket: (ticket.price, ticket.id),
         )
         return [

@@ -12,7 +12,6 @@ class Order(models.Model):
         ("pending", "Pending"),
         ("paid", "Paid"),
         ("failed", "Failed"),
-        ("expired", "Expired"),
     )
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

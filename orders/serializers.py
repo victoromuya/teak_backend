@@ -1,10 +1,11 @@
 from rest_framework import serializers
 from django.db import transaction
 from django.utils import timezone
-from events.models import TicketType
+from events.models import Event, TicketType
 from events.serializers import EventSerializer
 from .models import Order, OrderItem, Ticket, WithdrawalRequest
 from .processing_fees import payment_breakdown
+from .limits import MAX_TICKETS_PER_ORDER
 import uuid
 
 
@@ -98,16 +99,19 @@ class PurchasedTicketSerializer(serializers.ModelSerializer):
 
 class OrderItemInputSerializer(serializers.Serializer):
     ticket_type = serializers.IntegerField()
-    quantity = serializers.IntegerField(min_value=1)
+    quantity = serializers.IntegerField(min_value=1, max_value=MAX_TICKETS_PER_ORDER)
 
 
 class OrderCreateSerializer(serializers.Serializer):
     event = serializers.IntegerField()
-    items = OrderItemInputSerializer(many=True)
+    items = OrderItemInputSerializer(many=True, max_length=MAX_TICKETS_PER_ORDER)
 
     def validate(self, data):
         if not data["items"]:
             raise serializers.ValidationError("Order must contain at least one ticket.")
+        if sum(item["quantity"] for item in data["items"]) > MAX_TICKETS_PER_ORDER:
+            message = f"You can book at most {MAX_TICKETS_PER_ORDER} tickets per order."
+            raise serializers.ValidationError({"items": message, "message": message})
         return data
 
     def create(self, validated_data):
@@ -118,6 +122,15 @@ class OrderCreateSerializer(serializers.Serializer):
         total_amount = 0
 
         with transaction.atomic():
+            event_id = validated_data["event"]
+            event = Event.objects.select_for_update().filter(pk=event_id).first()
+            if event is None or event.is_deleted or not event.is_active:
+                message = "This event is not available for booking."
+                raise serializers.ValidationError({"event": message, "message": message})
+            if event.event_date_has_passed():
+                message = "This event has ended and is no longer available for booking."
+                raise serializers.ValidationError({"event": message, "message": message})
+
             # Lock selected ticket rows
             ticket_ids = [item["ticket_type"] for item in items_data]
             tickets = TicketType.objects.select_for_update().filter(id__in=ticket_ids)
@@ -127,7 +140,6 @@ class OrderCreateSerializer(serializers.Serializer):
             if len(ticket_map) != len(ticket_ids):
                 raise serializers.ValidationError("Invalid ticket type selected.")
 
-            event_id = validated_data["event"]
             if any(ticket.event_id != event_id for ticket in tickets):
                 raise serializers.ValidationError(
                     {
@@ -141,6 +153,10 @@ class OrderCreateSerializer(serializers.Serializer):
             now = timezone.now()
             for item in items_data:
                 ticket = ticket_map[item["ticket_type"]]
+
+                if not ticket.is_active:
+                    message = f"{ticket.name} tickets are no longer available for sale."
+                    raise serializers.ValidationError({"items": message, "message": message})
 
                 if (
                     ticket.sales_expiry_date is not None

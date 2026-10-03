@@ -114,3 +114,18 @@ class AdminPaidOrderImmutabilityTests(APITestCase):
         response = self.client.delete(f"/api/admin/orders/{self.order.pk}/")
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
         self.assertTrue(Order.objects.filter(pk=self.order.pk).exists())
+
+    def test_dashboard_total_orders_counts_only_successful_orders(self):
+        for order_status in ("pending", "failed", "expired", "paid"):
+            Order.objects.create(
+                user=self.order.user,
+                event=self.order.event,
+                reference=f"dashboard-{order_status}",
+                total_amount="0.00",
+                status=order_status,
+            )
+
+        response = self.client.get("/api/admin/dashboard/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["stats"]["total_orders"], 2)

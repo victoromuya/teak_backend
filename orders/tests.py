@@ -73,6 +73,42 @@ class WithdrawalRequestTests(APITestCase):
         self.assertEqual(withdrawal.email, self.organizer.email)
         self.assertEqual(len(mail.outbox), 1)
 
+    def test_withdrawal_records_are_private_to_their_owner(self):
+        self.client.force_authenticate(self.organizer)
+        created = self.client.post("/api/withdrawals/", self.payload, format="json")
+        self.assertEqual(created.status_code, 201)
+        own_id = created.data["id"]
+        other = get_user_model().objects.create_user(
+            email="other-payout-owner@example.com", password="password123", is_organizer=True,
+        )
+        other_event = Event.objects.create(organizer=other, title="Other payout event", description="Test")
+        other_record = WithdrawalRequest.objects.create(
+            organizer=other, event=other_event, email=other.email,
+            gross_revenue="10000.00", fee_percentage="6.00", fee_amount="600.00", amount="9400.00",
+            contact="Other owner", account_number="1111111111", bank_name="Other bank", account_name="Other owner",
+        )
+        for query in ({}, {"organizer": other.pk}, {"event": other_event.pk}):
+            response = self.client.get("/api/withdrawals/", query)
+            self.assertEqual(response.status_code, 200)
+            records = response.data if isinstance(response.data, list) else response.data["results"]
+            self.assertEqual([record["id"] for record in records], [own_id])
+        self.assertEqual(self.client.get(f"/api/withdrawals/{own_id}/").status_code, 200)
+        self.assertEqual(self.client.get(f"/api/withdrawals/{other_record.pk}/").status_code, 404)
+        self.assertEqual(self.client.get("/api/withdrawals/balance/", {"event": other_event.pk}).status_code, 404)
+        for action in ("complete", "reject"):
+            self.assertEqual(self.client.post(f"/api/withdrawals/{other_record.pk}/{action}/").status_code, 403)
+
+        self.client.force_authenticate(other)
+        self.assertEqual(self.client.get(f"/api/withdrawals/{own_id}/").status_code, 404)
+        self.assertEqual(self.client.get(f"/api/withdrawals/{other_record.pk}/").status_code, 200)
+
+        self.client.force_authenticate(self.admin)
+        response = self.client.get("/api/withdrawals/")
+        records = response.data if isinstance(response.data, list) else response.data["results"]
+        self.assertEqual({record["id"] for record in records}, {own_id, other_record.pk})
+        self.client.force_authenticate(user=None)
+        self.assertEqual(self.client.get("/api/withdrawals/").status_code, 401)
+
     def test_pending_request_reserves_available_balance(self):
         self.client.force_authenticate(self.organizer)
         self.client.post("/api/withdrawals/", self.payload, format="json")
@@ -176,6 +212,54 @@ class WithdrawalRequestTests(APITestCase):
         self.assertEqual(balance.data["withdrawn_amount"], Decimal("9400.00"))
         self.assertEqual(len(history.data), 1)
         self.assertEqual(history.data[0]["status"], "completed")
+
+    def test_competing_withdrawal_decisions_cannot_overwrite_winner(self):
+        from .views import WithdrawalRequestViewSet, event_withdrawal_balance
+
+        self.client.force_authenticate(self.organizer)
+        created = self.client.post("/api/withdrawals/", self.payload, format="json")
+        withdrawal_id = created.data["id"]
+        self.client.force_authenticate(self.admin)
+
+        # Exercise the race deterministically: another request commits after
+        # this request reads the pending record but before it writes its decision.
+        for winner in ("complete", "reject"):
+            for loser in ("complete", "reject"):
+                with self.subTest(winner=winner, loser=loser):
+                    WithdrawalRequest.objects.filter(pk=withdrawal_id).update(
+                        status="pending", completed_at=None, completed_by=None,
+                        admin_note="",
+                    )
+                    stale = WithdrawalRequest.objects.get(pk=withdrawal_id)
+                    mail.outbox.clear()
+                    response = self.client.post(
+                        f"/api/withdrawals/{withdrawal_id}/{winner}/",
+                        {"admin_note": "Winning decision"}, format="json",
+                    )
+                    self.assertEqual(response.status_code, 200)
+                    with patch.object(WithdrawalRequestViewSet, "get_object", return_value=stale):
+                        response = self.client.post(
+                            f"/api/withdrawals/{withdrawal_id}/{loser}/",
+                            {"admin_note": "Losing decision"}, format="json",
+                        )
+                    self.assertEqual(response.status_code, 409)
+                    record = WithdrawalRequest.objects.get(pk=withdrawal_id)
+                    self.assertEqual(record.status, "completed" if winner == "complete" else "rejected")
+                    self.assertEqual(record.admin_note, "Winning decision")
+                    self.assertEqual(record.completed_by_id, self.admin.pk if winner == "complete" else None)
+                    self.assertEqual(record.completed_at is not None, winner == "complete")
+                    self.assertEqual(len(mail.outbox), 1 if winner == "complete" else 0)
+                    self.assertEqual(
+                        event_withdrawal_balance(self.event)["available_amount"],
+                        Decimal("0.00") if winner == "complete" else Decimal("9400.00"),
+                    )
+
+    def test_unknown_withdrawal_decisions_return_not_found(self):
+        self.client.force_authenticate(self.admin)
+        for action in ("complete", "reject"):
+            self.assertEqual(
+                self.client.post(f"/api/withdrawals/999999/{action}/").status_code, 404
+            )
 
     def test_organizer_cannot_withdraw_another_organizers_event(self):
         other = get_user_model().objects.create_user(
@@ -441,6 +525,115 @@ class OrderTicketSalesExpiryTests(APITestCase):
         self.assertTrue(Order.objects.filter(user=self.buyer).exists())
 
 
+    @patch("orders.views.requests.post")
+    def test_unavailable_events_reject_free_and_paid_checkout(self, paystack_post):
+        ticket = self.create_ticket_type("Availability", None)
+        today = timezone.localdate()
+        cases = [
+            {"is_active": False},
+            {"is_deleted": True},
+            {"end_date": today - timedelta(days=1)},
+            {"start_date": today - timedelta(days=1), "end_date": None},
+        ]
+        for price in (Decimal("0.00"), Decimal("1000.00")):
+            TicketType.objects.filter(pk=ticket.pk).update(price=price)
+            for changes in cases:
+                with self.subTest(price=price, changes=changes):
+                    Event.objects.filter(pk=self.event.pk).update(
+                        is_active=True, is_deleted=False,
+                        start_date=today, end_date=today,
+                    )
+                    Event.objects.filter(pk=self.event.pk).update(**changes)
+                    response = self.place_order(ticket)
+                    self.assertEqual(response.status_code, 400)
+                    self.assertIn("event", response.data)
+                    self.assertFalse(Order.objects.exists())
+                    self.assertFalse(OrderItem.objects.exists())
+                    self.assertFalse(Ticket.objects.exists())
+                    ticket.refresh_from_db()
+                    self.assertEqual(ticket.remaining, 100)
+        paystack_post.assert_not_called()
+
+    @patch("orders.views.requests.post")
+    def test_missing_event_is_rejected_before_payment(self, paystack_post):
+        ticket = self.create_ticket_type("Availability", None)
+        response = self.client.post("/api/orders/", {
+            "event": self.event.pk + 99999,
+            "items": [{"ticket_type": ticket.pk, "quantity": 1}],
+        }, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("event", response.data)
+        self.assertFalse(Order.objects.exists())
+        paystack_post.assert_not_called()
+
+    @patch("orders.views.requests.post")
+    def test_current_and_future_end_dates_allow_checkout(self, paystack_post):
+        paystack_post.return_value.json.return_value = {
+            "status": True, "data": {"authorization_url": "https://pay.example/checkout"},
+        }
+        ticket = self.create_ticket_type("Available", None)
+        today = timezone.localdate()
+        for end_date in (today, today + timedelta(days=1)):
+            with self.subTest(end_date=end_date):
+                Event.objects.filter(pk=self.event.pk).update(
+                    start_date=today - timedelta(days=1), end_date=end_date,
+                )
+                response = self.place_order(ticket)
+                self.assertEqual(response.status_code, 201)
+        self.assertEqual(Order.objects.count(), 2)
+
+    @patch("orders.views.requests.post")
+    def test_sold_out_and_insufficient_inventory_reject_checkout(self, paystack_post):
+        ticket = self.create_ticket_type("Limited", None)
+        for remaining, quantity in ((0, 1), (1, 2)):
+            with self.subTest(remaining=remaining, quantity=quantity):
+                TicketType.objects.filter(pk=ticket.pk).update(remaining=remaining)
+                response = self.client.post("/api/orders/", {
+                    "event": self.event.pk,
+                    "items": [{"ticket_type": ticket.pk, "quantity": quantity}],
+                }, format="json")
+                self.assertEqual(response.status_code, 400)
+                self.assertFalse(Order.objects.exists())
+                ticket.refresh_from_db()
+                self.assertEqual(ticket.remaining, remaining)
+        paystack_post.assert_not_called()
+
+    @patch("orders.views.requests.post")
+    def test_exact_sales_expiry_rejects_checkout(self, paystack_post):
+        closing_time = timezone.now()
+        ticket = self.create_ticket_type("Closing", closing_time)
+        with patch("orders.serializers.timezone.now", return_value=closing_time):
+            response = self.place_order(ticket)
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(Order.objects.exists())
+        paystack_post.assert_not_called()
+
+    def test_free_checkout_rolls_back_stock_if_a_ticket_sells_out_before_fulfillment(self):
+        from .serializers import OrderCreateSerializer
+
+        first = TicketType.objects.create(event=self.event, name="First free", price=0, remaining=1)
+        second = TicketType.objects.create(event=self.event, name="Second free", price=0, remaining=1)
+        original_save = OrderCreateSerializer.save
+
+        def save_with_competing_sale(serializer, **kwargs):
+            order = original_save(serializer, **kwargs)
+            TicketType.objects.filter(pk=second.pk).update(remaining=0)
+            return order
+
+        with patch.object(OrderCreateSerializer, "save", save_with_competing_sale):
+            response = self.client.post("/api/orders/", {
+                "event": self.event.pk,
+                "items": [{"ticket_type": first.pk, "quantity": 1}, {"ticket_type": second.pk, "quantity": 1}],
+            }, format="json")
+        self.assertEqual(response.status_code, 400)
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.remaining, 1)
+        self.assertEqual(second.remaining, 0)
+        self.assertFalse(Ticket.objects.exists())
+        self.assertFalse(Order.objects.filter(status="paid").exists())
+
+
 class OrganizerOrderReportingTests(APITestCase):
     def setUp(self):
         user_model = get_user_model()
@@ -636,6 +829,22 @@ class OrganizerOrderReportingTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
+    def test_attendee_export_neutralizes_formula_cells(self):
+        self.client.force_authenticate(self.organizer)
+        for payload in ("=1+1", "+1+1", "-1+1", "@SUM(1)", "  =1+1", "\t=1+1", "\r=1+1", "\n=1+1"):
+            with self.subTest(payload=payload):
+                self.buyer.first_name = payload
+                self.buyer.last_name = ""
+                self.buyer.save(update_fields=["first_name", "last_name"])
+                Event.objects.filter(pk=self.first_event.pk).update(title=payload)
+                response = self.client.get("/api/orders/organizer-attendees/", {"event": self.first_event.pk})
+                self.assertEqual(response.status_code, 200)
+                rows = list(csv.DictReader(io.StringIO(response.content.decode("utf-8-sig"))))
+                self.assertTrue(rows)
+                for row in rows:
+                    self.assertTrue(row["Attendee Name"].startswith("'"))
+                    self.assertEqual(row["Event Title"], "'" + payload)
+
     def test_attendee_export_requires_an_event(self):
         self.client.force_authenticate(self.organizer)
 
@@ -689,6 +898,22 @@ class OrderHistoryProtectionTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
         self.assertTrue(Order.objects.filter(pk=order.pk).exists())
+
+    def test_incomplete_payment_becomes_failed_after_payment_window(self):
+        incomplete = self.create_order("incomplete-payment", "pending")
+        paid = self.create_order("completed-payment", "paid")
+        pending = self.create_order("active-payment", "pending")
+        Order.objects.filter(pk__in=[incomplete.pk, paid.pk]).update(
+            created_at=timezone.now() - timedelta(minutes=11)
+        )
+
+        response = self.client.get(f"/api/orders/{incomplete.pk}/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["status"], "failed")
+        for order, expected in [(incomplete, "failed"), (paid, "paid"), (pending, "pending")]:
+            order.refresh_from_db()
+            self.assertEqual(order.status, expected)
 
     def test_orders_cannot_be_modified_through_customer_api(self):
         order = self.create_order("pending-history", "pending")
@@ -914,6 +1139,7 @@ class PaystackFinalizationTests(APITestCase):
             "data": self.payment_data,
         }
 
+        self.client.force_authenticate(self.buyer)
         first = self.client.get(f"/api/orders/verify/{self.order.reference}/")
         second = self.client.get(f"/api/orders/verify/{self.order.reference}/")
 
@@ -923,6 +1149,49 @@ class PaystackFinalizationTests(APITestCase):
         self.assertEqual(second.data["message"], "Payment already verified")
         self.assertEqual(self.ticket_type.remaining, 8)
         self.assertEqual(Ticket.objects.filter(order=self.order).count(), 2)
+
+        self.assertEqual(len(first.data["tickets"]), 2)
+        self.assertEqual(len(second.data["tickets"]), 2)
+
+    @patch("orders.views.requests.get")
+    @patch("orders.views.finalize_paystack_payment")
+    def test_verification_denies_anonymous_and_other_accounts_before_fulfillment(self, finalize, paystack_get):
+        stranger = get_user_model().objects.create_user(
+            email="unrelated-buyer@example.com", password="password123"
+        )
+        admin = get_user_model().objects.create_user(
+            email="unrelated-admin@example.com", password="password123", is_staff=True
+        )
+        for payment_status in ("pending", "paid"):
+            Order.objects.filter(pk=self.order.pk).update(status=payment_status)
+            for user in (None, stranger, self.organizer, admin):
+                with self.subTest(payment_status=payment_status, user=getattr(user, "pk", None)):
+                    self.client.force_authenticate(user=user)
+                    response = self.client.get(f"/api/orders/verify/{self.order.reference}/")
+                    self.assertEqual(response.status_code, 401 if user is None else 404)
+                    self.assertNotIn("tickets", response.data)
+                    self.assertNotIn("order_id", response.data)
+        finalize.assert_not_called()
+        paystack_get.assert_not_called()
+
+    @patch("orders.views.requests.get")
+    def test_unknown_payment_reference_does_not_contact_paystack(self, paystack_get):
+        self.client.force_authenticate(self.buyer)
+        response = self.client.get("/api/orders/verify/unknown-reference/")
+        self.assertEqual(response.status_code, 404)
+        paystack_get.assert_not_called()
+
+    @override_settings(FRONTEND_URL="https://tickfirst.example")
+    def test_public_callback_redirects_to_frontend_without_exposing_tickets(self):
+        from urllib.parse import urlencode
+
+        reference = "reference&other=value"
+        response = self.client.get("/api/payment-success/", {"reference": reference})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"],
+            "https://tickfirst.example/payment-success?" + urlencode({"reference": reference}),
+        )
 
     @patch("orders.webhook.finalize_paystack_payment")
     def test_signed_webhook_delegates_to_shared_service(self, finalize):

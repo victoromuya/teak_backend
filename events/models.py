@@ -66,6 +66,7 @@ class TicketType(models.Model):
     sales_expiry_date = models.DateTimeField(blank=True, null=True)
     quantity = models.PositiveIntegerField(default=100)
     remaining = models.PositiveIntegerField(default=100)
+    is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:

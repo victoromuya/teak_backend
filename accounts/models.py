@@ -83,6 +83,7 @@ class EmailOTP(models.Model):
     )
 
     is_used = models.BooleanField(default=False)
+    failed_attempts = models.PositiveSmallIntegerField(default=0)
 
     expires_at = models.DateTimeField()
 
@@ -102,3 +103,8 @@ class EmailOTP(models.Model):
     def generate_otp():
         return f"{secrets.randbelow(900000) + 100000:06d}"
 
+
+class AuthRateLimit(models.Model):
+    key = models.CharField(max_length=64, primary_key=True)
+    count = models.PositiveIntegerField(default=0)
+    expires_at = models.DateTimeField(db_index=True)

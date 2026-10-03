@@ -31,6 +31,7 @@ jobs:
       EMAIL_HOST_PASSWORD: ci-only-password
       CLOUDSTORE_API_KEY: ci-only-key
       CLOUDSTORE_API_SECRET: ci-only-secret
+      TICKET_PLATFORM_FEE_PERCENTAGE: "6.00"
 
     steps:
       - uses: actions/checkout@v4

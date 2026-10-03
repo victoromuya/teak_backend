@@ -28,7 +28,7 @@ from .serializers import (
     PasswordResetConfirmSerializer, EmailCheckSerializer, VerifyEmailOTPSerializer
 )
 
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
@@ -43,6 +43,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from smtplib import SMTPException
 from django.core.exceptions import ImproperlyConfigured
 from requests import RequestException
+from .throttles import AuthThrottle, AuthEmailThrottle
 
 
 User = get_user_model()
@@ -50,19 +51,28 @@ User = get_user_model()
 
 class MyTokenObtainPairView(TokenObtainPairView):
     serializer_class = LoginSerializer
+    throttle_classes = [AuthThrottle, AuthEmailThrottle]
 
 @extend_schema(
     tags=["auth"],
     description="Register a new user"
 )
 class RegisterView(generics.CreateAPIView):
+    throttle_classes = [AuthThrottle, AuthEmailThrottle]
+    auth_limit_group = "email"
     queryset = User.objects.all()
     serializer_class = RegisterSerializer
     permission_classes = [permissions.AllowAny]  # Allow unauthenticated users to sign up
 
     def create(self, request, *args, **kwargs):
         try:
-            return super().create(request, *args, **kwargs)
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(
+                {"message": "Check your email for the next steps to continue."},
+                status=status.HTTP_201_CREATED,
+            )
         except (SMTPException, OSError):
             return Response(
                 {"detail": "Verification email could not be sent. Please try again."},
@@ -198,6 +208,8 @@ class ContactView(APIView):
     responses={200: None}
 )
 class PasswordResetRequestView(APIView):
+    throttle_classes = [AuthThrottle, AuthEmailThrottle]
+    auth_limit_group = "email"
 
     @method_decorator(ratelimit(key="ip", rate="5/m", block=True))
     def post(self, request):
@@ -222,6 +234,7 @@ class PasswordResetRequestView(APIView):
     responses={200: None}
 )
 class PasswordResetConfirmView(APIView):
+    throttle_classes = [AuthThrottle]
 
     def get(self, request):
         """Keep previously emailed API links working after the frontend move."""
@@ -249,6 +262,8 @@ class PasswordResetConfirmView(APIView):
     responses={200: None}
 )
 class EmailVerificationRequestView(APIView):
+    throttle_classes = [AuthThrottle, AuthEmailThrottle]
+    auth_limit_group = "email"
 
     permission_classes = []
 
@@ -268,7 +283,7 @@ class EmailVerificationRequestView(APIView):
 
         return Response(
             {
-                "message": "If the email can be verified, a verification code has been sent."
+                "message": "Check your email for the next steps to continue."
             },
             status=status.HTTP_200_OK,
         )
@@ -281,6 +296,8 @@ class EmailVerificationRequestView(APIView):
     responses={200: None}
 )
 class VerifyEmailView(APIView):
+    throttle_classes = [AuthThrottle, AuthEmailThrottle]
+    auth_limit_group = "otp"
 
     permission_classes = []
 
@@ -301,13 +318,15 @@ class VerifyEmailView(APIView):
             is_used=False,
         ).first()
 
-        if otp_record is None:
+        if otp_record is None or otp_record.failed_attempts >= 5:
             return Response(
                 {"error": "Invalid OTP."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         if not check_password(otp, otp_record.otp):
+            otp_record.failed_attempts += 1
+            otp_record.save(update_fields=["failed_attempts"])
             return Response(
                 {"error": "Invalid OTP."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -351,11 +370,17 @@ class VerifyEmailView(APIView):
         # ===========================================
         elif purpose == "guest_checkout":
 
-            user = User.objects.create_user(
+            user, created = User.objects.get_or_create(
                 email=otp_record.email,
-                first_name=otp_record.first_name,
-                last_name=otp_record.last_name,
+                defaults={"first_name": otp_record.first_name, "last_name": otp_record.last_name},
             )
+            if not created:
+                otp_record.is_used = True
+                otp_record.save(update_fields=["is_used"])
+                return Response(
+                    {"error": "Please sign in to continue your booking."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
             user.is_email_verified = True
             user.set_unusable_password()
@@ -400,17 +425,11 @@ class VerifyEmailView(APIView):
 )
 @api_view(["POST"])
 @permission_classes([AllowAny])
+@throttle_classes([AuthThrottle, AuthEmailThrottle])
 def check_email(request):
 
     serializer = EmailCheckSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
 
-    email = serializer.validated_data["email"]
-
-    exists = CustomUser.objects.filter(
-        email__iexact=email
-    ).exists()
-
-    return Response({
-        "exists": exists
-    })
+    # Retain the route for older clients without exposing account membership.
+    return Response({"message": "Continue with email verification or sign in."})

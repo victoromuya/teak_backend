@@ -9,12 +9,13 @@ from rest_framework_simplejwt.views import (
     TokenBlacklistView,
 )
 from .views import ActivateOrganizerView, MyTokenObtainPairView
+from .tokens import SecureTokenRefreshView
 
 urlpatterns = [
     path('register/', RegisterView.as_view()),
     # path('login/', TokenObtainPairView.as_view()),
     path('login/', MyTokenObtainPairView.as_view(), name='token_obtain_pair'),
-    path('refresh/', TokenRefreshView.as_view()),
+    path('refresh/', SecureTokenRefreshView.as_view()),
     path('logout/', TokenBlacklistView.as_view(), name='token_blacklist'),
     path("organizer/profile/", OrganizerProfileView.as_view()),
     path("user/profile/", UserProfileView.as_view()),

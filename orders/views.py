@@ -27,7 +27,7 @@ from django.core.files import File
 from io import BytesIO
 import qrcode
 from rest_framework import status
-from rest_framework.exceptions import MethodNotAllowed
+from rest_framework.exceptions import MethodNotAllowed, ValidationError
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 from drf_spectacular.utils import extend_schema, OpenApiExample
@@ -41,6 +41,9 @@ from .services import (
 )
 from glob_utils.send_email import send_email
 from accounts.permissions import IsAdmin
+from .csv_utils import safe_csv_cell
+from .limits import MAX_TICKETS_PER_ORDER
+from accounts.throttles import AuthThrottle, AuthUserThrottle
 
 
 def withdrawal_fee_percentage():
@@ -53,6 +56,7 @@ def platform_config(request):
     """Return public, non-sensitive platform values used in customer-facing copy."""
     return Response({
         "ticket_platform_fee_percentage": withdrawal_fee_percentage(),
+        "max_tickets_per_order": MAX_TICKETS_PER_ORDER,
     })
 
 
@@ -154,20 +158,23 @@ class WithdrawalRequestViewSet(ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def complete(self, request, pk=None):
-        with transaction.atomic():
-            withdrawal = WithdrawalRequest.objects.select_for_update().select_related(
-                "organizer", "event"
-            ).get(pk=pk)
-            if withdrawal.status != "pending":
-                return Response(
-                    {"detail": "Only pending withdrawals can be completed."},
-                    status=status.HTTP_409_CONFLICT,
-                )
-            withdrawal.status = "completed"
-            withdrawal.completed_at = timezone.now()
-            withdrawal.completed_by = request.user
-            withdrawal.admin_note = request.data.get("admin_note", "")
-            withdrawal.save(update_fields=["status", "completed_at", "completed_by", "admin_note"])
+        withdrawal = self.get_object()
+        # Check and transition in one SQL statement: a concurrent decision
+        # cannot overwrite the winner, even if get_object() read stale data.
+        updated = WithdrawalRequest.objects.filter(
+            pk=withdrawal.pk, status="pending"
+        ).update(
+            status="completed",
+            completed_at=timezone.now(),
+            completed_by=request.user,
+            admin_note=request.data.get("admin_note", ""),
+        )
+        if not updated:
+            return Response(
+                {"detail": "Only pending withdrawals can be completed."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        withdrawal.refresh_from_db()
 
         send_email(
             "Withdrawal completed",
@@ -182,11 +189,15 @@ class WithdrawalRequestViewSet(ModelViewSet):
     @action(detail=True, methods=["post"])
     def reject(self, request, pk=None):
         withdrawal = self.get_object()
-        if withdrawal.status != "pending":
+        updated = WithdrawalRequest.objects.filter(
+            pk=withdrawal.pk, status="pending"
+        ).update(
+            status="rejected",
+            admin_note=request.data.get("admin_note", ""),
+        )
+        if not updated:
             return Response({"detail": "Only pending withdrawals can be rejected."}, status=409)
-        withdrawal.status = "rejected"
-        withdrawal.admin_note = request.data.get("admin_note", "")
-        withdrawal.save(update_fields=["status", "admin_note"])
+        withdrawal.refresh_from_db()
         return Response(self.get_serializer(withdrawal).data)
 
 
@@ -211,6 +222,12 @@ class WithdrawalRequestViewSet(ModelViewSet):
 class OrderViewSet(ModelViewSet):
     queryset = Order.objects.all()
     permission_classes = [IsAuthenticated]
+    auth_limit_group = "checkout"
+
+    def get_throttles(self):
+        if self.action == "create":
+            return [AuthThrottle(), AuthUserThrottle()]
+        return super().get_throttles()
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -225,7 +242,7 @@ class OrderViewSet(ModelViewSet):
         Order.objects.filter(
             status="pending",
             created_at__lt=expired_time
-        ).update(status="expired")
+        ).update(status="failed")
 
         if user.is_staff:
             return Order.objects.all()
@@ -273,12 +290,11 @@ class OrderViewSet(ModelViewSet):
                     ticket_type = item.ticket_type
 
                     if ticket_type.remaining < item.quantity:
-                        return Response(
-                            {
-                                "error": f"Insufficient tickets for {ticket_type.name}"
-                            },
-                            status=status.HTTP_400_BAD_REQUEST,
-                        )
+                        # Raise so any earlier stock deductions in this basket
+                        # roll back when another ticket type has sold out.
+                        raise ValidationError({
+                            "error": f"Insufficient tickets for {ticket_type.name}"
+                        })
 
                     ticket_type.remaining -= item.quantity
                     ticket_type.save(update_fields=["remaining"])
@@ -493,7 +509,7 @@ class OrderViewSet(ModelViewSet):
             event = order.event
             attendee = order.user
             scanner = ticket.scanned_by
-            writer.writerow([
+            writer.writerow([safe_csv_cell(value) for value in [
                 event.pk,
                 event.title,
                 event.start_date.isoformat() if event.start_date else "",
@@ -514,7 +530,7 @@ class OrderViewSet(ModelViewSet):
                 format_datetime(ticket.created_at),
                 format_datetime(ticket.scanned_at),
                 (scanner.get_full_name() or scanner.email) if scanner else "",
-            ])
+            ]])
 
         return response
 
@@ -642,7 +658,7 @@ class OrderViewSet(ModelViewSet):
     responses={200: None}
 )
 @api_view(["GET"])
-@permission_classes([])   # Allow any - Paystack redirects without auth
+@permission_classes([IsAuthenticated])
 def verify_payment(request, reference=None):
 
     # Get reference from query params (for Paystack callback) or URL kwargs (for backward compatibility)
@@ -653,6 +669,10 @@ def verify_payment(request, reference=None):
             {"error": "Reference not provided"},
             status=400
         )
+
+    # References identify payments; they do not authorize ticket access.
+    # Check ownership before contacting Paystack or fulfilling the order.
+    get_object_or_404(Order, reference=reference, user=request.user)
 
     # Paystack remains the source of truth; fulfillment is handled below.
     verify_url = f"https://api.paystack.co/transaction/verify/{reference}"
@@ -717,7 +737,7 @@ def verify_payment(request, reference=None):
 @permission_classes([])   # Allow any - redirect from Paystack
 def payment_success(request):
     """
-    Redirect to payment verification endpoint with reference from query params.
+    Redirect to the frontend for authenticated payment verification.
     Paystack redirects to this URL with ?trxref=XXX&reference=YYY
     """
     reference = request.GET.get('reference')
@@ -726,8 +746,10 @@ def payment_success(request):
             {"error": "Reference not provided"},
             status=400
         )
-    # Redirect to verification endpoint with reference as query parameter
-    return redirect(f'/api/orders/verify/?reference={reference}')
+    # Browser redirects do not carry bearer tokens. The frontend uses its
+    # authenticated API client; signed webhooks can fulfill payments separately.
+    query = urlencode({"reference": reference})
+    return redirect(f'{settings.FRONTEND_URL.rstrip("/")}/payment-success?{query}')
 
 
 
