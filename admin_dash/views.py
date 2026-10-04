@@ -134,7 +134,9 @@ class AdminDashboardView(APIView):
         total_orders = Order.objects.filter(status="paid").count()
         pending_withdrawals = WithdrawalRequest.objects.filter(status="pending").count()
 
-        total_revenue = Order.objects.aggregate(total=Sum("total_amount"))["total"] or 0
+        total_revenue = Order.objects.filter(status="paid").aggregate(
+            total=Sum("total_amount")
+        )["total"] or 0
 
         recent_orders = (
             Order.objects.select_related("user", "event")

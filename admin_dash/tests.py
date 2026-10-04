@@ -129,3 +129,31 @@ class AdminPaidOrderImmutabilityTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["stats"]["total_orders"], 2)
+
+    def test_dashboard_revenue_counts_only_successful_payments(self):
+        for order_status, amount in (
+            ("pending", "1000.00"),
+            ("failed", "2000.00"),
+            ("expired", "3000.00"),
+            ("paid", "250.00"),
+        ):
+            Order.objects.create(
+                user=self.order.user,
+                event=self.order.event,
+                reference=f"revenue-{order_status}",
+                total_amount=amount,
+                status=order_status,
+            )
+
+        response = self.client.get("/api/admin/dashboard/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["stats"]["total_revenue"], 750)
+
+    def test_dashboard_revenue_is_zero_without_successful_payments(self):
+        Order.objects.filter(pk=self.order.pk).update(status="pending")
+
+        response = self.client.get("/api/admin/dashboard/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["stats"]["total_revenue"], 0)
