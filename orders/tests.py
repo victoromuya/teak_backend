@@ -661,6 +661,27 @@ class OrderTicketSalesExpiryTests(APITestCase):
         self.assertFalse(Ticket.objects.exists())
         self.assertFalse(Order.objects.filter(status="paid").exists())
 
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    @patch("orders.notifications.send_online_event_email")
+    def test_free_booking_notifies_organizer_after_commit(self, _buyer_email):
+        self.event.type = "ONLINE"
+        self.event.save(update_fields=["type"])
+        ticket = TicketType.objects.create(
+            event=self.event, name="Free pass", price="0.00", remaining=3,
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post("/api/orders/", {
+                "event": self.event.pk,
+                "items": [{"ticket_type": ticket.pk, "quantity": 1}],
+            }, format="json")
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, [self.event.organizer.email])
+        self.assertIn("Free pass: 1", mail.outbox[0].body)
+        self.assertIn("NGN 0.00", mail.outbox[0].body)
+
 
 class OrganizerOrderReportingTests(APITestCase):
     def setUp(self):
@@ -1132,6 +1153,37 @@ class PaystackFinalizationTests(APITestCase):
         self.assertEqual(len(second_tickets), 2)
         self.assertEqual(Ticket.objects.filter(order=self.order).count(), 2)
         self.assertEqual(generate_tickets.call_count, 1)
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    @patch("orders.services._send_ticket_email")
+    @patch("orders.services._generate_tickets", return_value=[])
+    def test_organizer_receives_one_email_for_confirmed_purchase(self, _tickets, _buyer_email):
+        with self.captureOnCommitCallbacks(execute=True):
+            finalize_paystack_payment(self.order.reference, self.payment_data)
+            finalize_paystack_payment(self.order.reference, self.payment_data)
+
+        self.assertEqual(len(mail.outbox), 1)
+        message = mail.outbox[0]
+        self.assertEqual(message.to, [self.organizer.email])
+        self.assertIn(self.event.title, message.subject)
+        self.assertIn(self.buyer.email, message.body)
+        self.assertIn(self.order.reference, message.body)
+        self.assertIn("VIP: 2", message.body)
+        self.assertIn(f"/organizer/orders/{self.order.pk}", message.alternatives[0][0])
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    @patch("orders.services._send_ticket_email")
+    @patch("orders.services._generate_tickets", return_value=[])
+    @patch("orders.notifications.send_email", side_effect=RuntimeError("mail unavailable"))
+    def test_organizer_email_failure_does_not_reverse_payment(self, _send, _tickets, _buyer_email):
+        with patch("orders.notifications.logger.exception") as log_error, self.captureOnCommitCallbacks(execute=True):
+            finalize_paystack_payment(self.order.reference, self.payment_data)
+
+        self.order.refresh_from_db()
+        self.ticket_type.refresh_from_db()
+        self.assertEqual(self.order.status, "paid")
+        self.assertEqual(self.ticket_type.remaining, 8)
+        log_error.assert_called_once()
 
     @patch("orders.services._generate_tickets")
     def test_rejects_amount_mismatch_without_mutation(self, generate_tickets):

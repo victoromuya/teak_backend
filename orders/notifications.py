@@ -1,9 +1,49 @@
+import logging
+
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 
 from events.models import Event
+from glob_utils.send_email import send_email
 from .models import Order
+
+
+logger = logging.getLogger(__name__)
+
+
+def notify_organizer_of_purchase(order_id):
+    """Send one sale notice after a newly completed order commits."""
+    try:
+        order = Order.objects.select_related("event__organizer", "user").get(pk=order_id)
+        organizer_email = order.event.organizer.email
+        if not organizer_email:
+            return
+
+        items = list(order.items.select_related("ticket_type"))
+        ticket_count = sum(item.quantity for item in items)
+        ticket_lines = "\n".join(
+            f"- {item.ticket_type.name}: {item.quantity}"
+            for item in items
+        )
+        order_url = f"{settings.FRONTEND_URL.rstrip('/')}/organizer/orders/{order.pk}"
+        send_email(
+            subject=f"Ticket purchase for {order.event.title}",
+            heading="A ticket purchase is confirmed",
+            body=(
+                f"A customer has booked {ticket_count} ticket(s) for {order.event.title}.\n\n"
+                f"Buyer: {order.user.email}\n"
+                f"Order reference: {order.reference}\n"
+                f"Tickets:\n{ticket_lines}\n"
+                f"Order total: NGN {order.total_amount:,.2f}"
+            ),
+            to_email=organizer_email,
+            action_label="View order",
+            action_url=order_url,
+        )
+    except Exception:
+        # A mail provider failure must not reverse a confirmed booking.
+        logger.exception("Organizer purchase email failed for order %s", order_id)
 
 
 def send_online_event_email(order, updated=False):

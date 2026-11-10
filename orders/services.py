@@ -91,6 +91,7 @@ def finalize_paystack_payment(reference, payment_data):
         order.verified_at = timezone.now()
         order.save(update_fields=["status", "verified_at"])
         transaction.on_commit(lambda: _send_ticket_email(order.pk))
+        transaction.on_commit(lambda: _send_organizer_purchase_email(order.pk))
 
     return order, tickets, True
 
@@ -130,3 +131,9 @@ def _send_ticket_email(order_id):
     except Exception:
         # Fulfillment must not be rolled back or retried because email failed.
         pass
+
+
+def _send_organizer_purchase_email(order_id):
+    from .notifications import notify_organizer_of_purchase
+
+    notify_organizer_of_purchase(order_id)

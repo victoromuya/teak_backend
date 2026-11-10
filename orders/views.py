@@ -306,6 +306,9 @@ class OrderViewSet(ModelViewSet):
                 order.verified_at = timezone.now()
                 order.save(update_fields=["status", "verified_at"])
 
+                from .notifications import notify_organizer_of_purchase
+                transaction.on_commit(lambda: notify_organizer_of_purchase(order.pk))
+
                 # Online registrations receive the private link by email; the
                 # existing onsite QR-ticket flow remains unchanged.
                 if order.event.type == "ONLINE":
