@@ -24,6 +24,29 @@ from .models import Order, OrderItem, Ticket, WithdrawalRequest
 from .services import InvalidPaymentError, finalize_paystack_payment
 
 
+@override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+class TicketEmailAttachmentTests(APITestCase):
+    @patch("django.db.models.fields.files.FieldFile.read", return_value=b"\x89PNG\r\n\x1a\nqr-image")
+    def test_confirmation_email_attaches_each_ticket_qr_image(self, _read):
+        from .views import send_ticket_email
+
+        organizer = get_user_model().objects.create_user(email="email-organizer@example.com")
+        buyer = get_user_model().objects.create_user(email="email-buyer@example.com")
+        event = Event.objects.create(organizer=organizer, title="Email tickets", description="Test")
+        ticket_type = TicketType.objects.create(event=event, name="General", price="0.00", remaining=2)
+        order = Order.objects.create(user=buyer, event=event, reference="email-qr-1", total_amount="0.00", status="paid")
+        tickets = [Ticket.objects.create(order=order, ticket_type=ticket_type, qr_image=f"ticketQR/{index}.png") for index in range(2)]
+
+        send_ticket_email(order)
+
+        self.assertEqual(len(mail.outbox), 1)
+        message = mail.outbox[0]
+        self.assertEqual(message.to, [buyer.email])
+        self.assertEqual(len(message.attachments), 2)
+        self.assertEqual({attachment[0] for attachment in message.attachments}, {f"{ticket.ticket_code}.png" for ticket in tickets})
+        self.assertTrue(all(attachment[1].startswith(b"\x89PNG") and attachment[2] == "image/png" for attachment in message.attachments))
+
+
 @override_settings(
     EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
     TICKET_PLATFORM_FEE_PERCENTAGE="6.00",
@@ -452,6 +475,11 @@ class OrderEventTicketTypeValidationTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertTrue(Order.objects.filter(user__email=guest_email).exists())
+        repeated = self.client.post("/api/orders/", {
+            "event": self.requested_event.pk,
+            "items": [{"ticket_type": ticket_type.pk, "quantity": 1}],
+        }, format="json")
+        self.assertEqual(repeated.status_code, status.HTTP_400_BAD_REQUEST)
 
 
 class OrderTicketSalesExpiryTests(APITestCase):

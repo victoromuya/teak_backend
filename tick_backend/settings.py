@@ -118,9 +118,7 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'tick_backend.wsgi.application'
 
-
 # Database
-
 DATABASES = {
     'default': dj_database_url.config(
         default=os.getenv("DATABASE_URL", "sqlite:///db.sqlite3"),
@@ -160,7 +158,7 @@ AUTH_USER_MODEL = 'accounts.CustomUser'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'accounts.authentication.ScopedJWTAuthentication',
     ),
     'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend'],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
@@ -253,7 +251,6 @@ CORS_ALLOW_HEADERS = [
     # Add any other custom headers your frontend might be using
 ]
 
-
 FRONTEND_URL = os.getenv(
     "FRONTEND_URL",
     "http://localhost:5173" if DEBUG else "https://tickfirst.net",
@@ -267,7 +264,6 @@ PAYSTACK_SECRET_KEY=os.getenv("PAYSTACK_SECRET_KEY")
 PAYSTACK_CALLBACK_URL=f"{FRONTEND_URL}/payment-success"
 
 
-
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=10),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=15),
@@ -275,7 +271,6 @@ SIMPLE_JWT = {
     'BLACKLIST_AFTER_ROTATION': True,
     'CHECK_REVOKE_TOKEN': True,
 }
-
 
 EMAIL_BACKEND = os.getenv(
     "EMAIL_BACKEND",
@@ -327,9 +322,6 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
 MEDIA_ROOT = os.path.join(BASE_DIR, "media")
 MEDIA_URL = "/media/"
 
-
-
-
 CLOUDINARY_STORAGE = {
     'CLOUD_NAME':'ducy4bo9m',
     'API_KEY':os.getenv("CLOUDSTORE_API_KEY"),
@@ -337,5 +329,5 @@ CLOUDINARY_STORAGE = {
 }
 
 # Set the default file storage
-#if not DEBUG: # If on Vercel/Production
+# if not DEBUG: # If on Vercel/Production
 DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'

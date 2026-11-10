@@ -117,11 +117,20 @@ class OrderCreateSerializer(serializers.Serializer):
     def create(self, validated_data):
         request = self.context["request"]
         user = request.user
+        guest_otp = None
 
         items_data = validated_data["items"]
         total_amount = 0
 
         with transaction.atomic():
+            if request.auth and request.auth.get('scope') == 'guest':
+                from accounts.models import EmailOTP
+                guest_otp = EmailOTP.objects.select_for_update().filter(
+                    pk=request.auth.get('guest_otp_id'), email=user.email,
+                    purpose='guest_checkout', is_used=True,
+                ).first()
+                if guest_otp is None or Order.objects.filter(guest_otp=guest_otp).exists():
+                    raise serializers.ValidationError('Verify your email again for this purchase.')
             event_id = validated_data["event"]
             event = Event.objects.select_for_update().filter(pk=event_id).first()
             if event is None or event.is_deleted or not event.is_active:
@@ -185,6 +194,7 @@ class OrderCreateSerializer(serializers.Serializer):
 
             order = Order.objects.create(
                 user=user,
+                guest_otp=guest_otp,
                 event_id=validated_data["event"],
                 reference=reference,
                 total_amount=total_amount,

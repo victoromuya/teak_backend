@@ -44,6 +44,9 @@ def issue_email_otp(*, email, purpose, first_name="", last_name=""):
         purpose=purpose,
         expires_at=timezone.now() + timedelta(minutes=10),
     )
+    if settings.LOCAL_PRINT_OTP:
+        print(f"[LOCAL OTP] {purpose} for {email}: {plain_otp}", flush=True)
+        return
     send_email(
         subject="Verify your email",
         body=f"Your verification code is {plain_otp}. It expires in 10 minutes.",
@@ -89,9 +92,16 @@ class RegisterSerializer(serializers.ModelSerializer):
             created = False
             if user is None:
                 user, created = User.objects.get_or_create(
-                    email=email, defaults={**validated_data, "password": password},
+                    email=email, defaults={**validated_data, "password": password, "is_registered": False},
                 )
             if not created:
+                if not user.is_registered:
+                    user.password = password
+                    user.first_name = validated_data.get("first_name", user.first_name)
+                    user.last_name = validated_data.get("last_name", user.last_name)
+                    user.save(update_fields=["password", "first_name", "last_name"])
+                    issue_email_otp(email=user.email, purpose="registration")
+                    return user
                 send_account_access_email(user)
                 return user
             issue_email_otp(
@@ -131,6 +141,8 @@ class LoginSerializer(serializers.Serializer):
             raise serializers.ValidationError({
                 "detail": "Verify your email address before logging in."
             })
+        if not user.is_registered:
+            raise serializers.ValidationError({"detail": "Complete sign up before signing in."})
 
 
         # 2. Token Generation
@@ -245,7 +257,7 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 
 class EmailVerificationRequestSerializer(serializers.Serializer):
     email = serializers.EmailField()
-    purpose = serializers.ChoiceField(choices=("registration", "guest_checkout"))
+    purpose = serializers.ChoiceField(choices=("registration", "guest_checkout", "ticket_access"))
     first_name = serializers.CharField(required=False, allow_blank=True, default="")
     last_name = serializers.CharField(required=False, allow_blank=True, default="")
 
@@ -259,14 +271,12 @@ class EmailVerificationRequestSerializer(serializers.Serializer):
         # Don't reveal whether the email exists
         user = CustomUser.objects.filter(email__iexact=email).first()
 
-        if user and purpose == "guest_checkout":
-            # Existing accounts must authenticate normally; disclose next steps
-            # only to the email owner, never through a public existence check.
+        if purpose == "registration" and user and user.is_registered and user.is_email_verified:
             send_account_access_email(user)
             return data
 
-        if user and user.is_email_verified:
-            send_account_access_email(user)
+        if purpose == "ticket_access" and not user:
+            # Keep the public response identical for unknown addresses.
             return data
 
         issue_email_otp(
@@ -287,6 +297,7 @@ class VerifyEmailOTPSerializer(serializers.Serializer):
         choices=[
             ("registration", "Registration"),
             ("guest_checkout", "Guest Checkout"),
+            ("ticket_access", "Ticket Access"),
         ]
     )
 

@@ -244,6 +244,8 @@ class OrderViewSet(ModelViewSet):
             created_at__lt=expired_time
         ).update(status="failed")
 
+        if self.request.auth and self.request.auth.get('scope') == 'guest':
+            return Order.objects.filter(user=user)
         if user.is_staff:
             return Order.objects.all()
         if self.action in ["retrieve", "destroy"] and getattr(user, "is_organizer", False):
@@ -807,6 +809,7 @@ Order Reference: {order.reference}
 Tickets: {tickets.count()}
 
 Your QR tickets are attached to this email. Keep them private and present them at entry.
+View your tickets online: {settings.FRONTEND_URL.rstrip('/')}/ticket-access?{urlencode({'email': order.user.email})}
 """
     if event_location:
         text_content += f"\nLocation: {event_location}\n"
@@ -818,6 +821,7 @@ Your QR tickets are attached to this email. Keep them private and present them a
         "tickets": tickets,
         "ticket_count": tickets.count(),
         "frontend_url": settings.FRONTEND_URL.rstrip("/"),
+        "ticket_access_url": f"{settings.FRONTEND_URL.rstrip('/')}/ticket-access?{urlencode({'email': order.user.email})}",
         "event_location": event_location,
         "directions_url": directions_url,
     })

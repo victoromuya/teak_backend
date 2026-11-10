@@ -16,6 +16,7 @@ class Order(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    guest_otp = models.OneToOneField('accounts.EmailOTP', null=True, blank=True, on_delete=models.PROTECT)
     event = models.ForeignKey(Event, on_delete=models.PROTECT, default=1)
     reference = models.CharField(max_length=100, unique=True, default="aaa")
     total_amount = models.DecimalField(max_digits=12, decimal_places=2)

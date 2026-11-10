@@ -42,6 +42,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     is_active = models.BooleanField(default=True)
     is_organizer = models.BooleanField(default=False)
     is_email_verified = models.BooleanField(default=False)
+    is_registered = models.BooleanField(default=True)
     date_joined = models.DateTimeField(default=timezone.now)
 
     objects = CustomUserManager()
@@ -67,6 +68,7 @@ class EmailOTP(models.Model):
     PURPOSE_CHOICES = (
         ("registration", "Registration"),
         ("guest_checkout", "Guest Checkout"),
+        ("ticket_access", "Ticket Access"),
         ("login", "Login"),
         ("password_reset", "Password Reset"),
         ("email_change", "Email Change"),

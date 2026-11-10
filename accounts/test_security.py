@@ -52,15 +52,15 @@ class AuthenticationSecurityTests(APITestCase):
         self.assertEqual(send.call_count, 2)
 
     @patch("accounts.serializers.send_email")
-    def test_guest_existing_account_gets_private_signin_instructions(self, send):
+    def test_guest_existing_account_receives_otp_without_changing_password(self, send):
         responses = [self.client.post("/api/auth/email-verification/", {
             "email": email, "purpose": "guest_checkout", "first_name": "Guest",
         }, format="json") for email in (self.user.email, "new-guest-security@example.com")]
         self.assertEqual([r.status_code for r in responses], [200, 200])
         self.assertEqual(responses[0].data, responses[1].data)
-        self.assertFalse(EmailOTP.objects.filter(email=self.user.email).exists())
+        self.assertEqual(EmailOTP.objects.filter(email=self.user.email).count(), 1)
         self.assertEqual(EmailOTP.objects.filter(email="new-guest-security@example.com").count(), 1)
-        self.assertEqual(send.call_args_list[0].kwargs["action_label"], "Sign in")
+        self.assertIn("verification code", send.call_args_list[0].kwargs["body"])
         self.user.refresh_from_db()
         self.assertTrue(self.user.check_password("OldStrongPassword123!"))
 

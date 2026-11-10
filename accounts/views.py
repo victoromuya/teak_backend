@@ -173,6 +173,8 @@ class ActivateOrganizerView(APIView):
 
     def post(self, request):
         user = request.user
+        if not user.is_registered:
+            return Response({"detail": "Sign up before using organizer features."}, status=403)
         if not user.is_organizer:
             user.is_organizer = True
             user.save(update_fields=["is_organizer"])
@@ -351,9 +353,12 @@ class VerifyEmailView(APIView):
                     {"error": "User not found."},
                     status=status.HTTP_404_NOT_FOUND,
                 )
+            if not user.has_usable_password():
+                return Response({"error": "Complete sign up before verifying registration."}, status=400)
 
             user.is_email_verified = True
-            user.save(update_fields=["is_email_verified"])
+            user.is_registered = True
+            user.save(update_fields=["is_email_verified", "is_registered"])
 
             otp_record.is_used = True
             otp_record.save(update_fields=["is_used"])
@@ -368,25 +373,25 @@ class VerifyEmailView(APIView):
         # ===========================================
         # GUEST CHECKOUT
         # ===========================================
-        elif purpose == "guest_checkout":
+        elif purpose in ("guest_checkout", "ticket_access"):
+            if purpose == "ticket_access" and not User.objects.filter(email=email).exists():
+                return Response({"error": "Invalid OTP."}, status=400)
 
             user, created = User.objects.get_or_create(
                 email=otp_record.email,
-                defaults={"first_name": otp_record.first_name, "last_name": otp_record.last_name},
+                defaults={"first_name": otp_record.first_name, "last_name": otp_record.last_name,
+                          "is_registered": False, "is_email_verified": True},
             )
-            if not created:
-                otp_record.is_used = True
-                otp_record.save(update_fields=["is_used"])
-                return Response(
-                    {"error": "Please sign in to continue your booking."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            user.is_email_verified = True
-            user.set_unusable_password()
-            user.save()
+            if created:
+                user.set_unusable_password()
+                user.save(update_fields=["password"])
 
             refresh = RefreshToken.for_user(user)
+            refresh['scope'] = 'guest'
+            refresh['guest_purpose'] = purpose
+            refresh['guest_otp_id'] = otp_record.pk
+            refresh['guest_until'] = int((timezone.now() + timedelta(hours=24)).timestamp())
+            refresh.set_exp(lifetime=timedelta(hours=24))
 
             otp_record.is_used = True
             otp_record.save(update_fields=["is_used"])

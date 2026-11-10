@@ -99,6 +99,21 @@ class ContactEndpointTests(APITestCase):
     PASSWORD_RESET_FRONTEND_URL="https://frontend.example",
 )
 class AuthenticationEmailFlowTests(APITestCase):
+    @override_settings(DEBUG=True, LOCAL_PRINT_OTP=True)
+    @patch("accounts.models.EmailOTP.generate_otp", return_value="123456")
+    def test_local_otp_print_mode_keeps_code_verifiable_without_email(self, _generate):
+        with patch("accounts.serializers.send_email") as send, patch("builtins.print") as output:
+            response = self.client.post("/api/auth/email-verification/", {
+                "email": "local-guest@example.com", "purpose": "guest_checkout",
+            }, format="json")
+        self.assertEqual(response.status_code, 200)
+        send.assert_not_called()
+        output.assert_any_call("[LOCAL OTP] guest_checkout for local-guest@example.com: 123456", flush=True)
+        verified = self.client.post("/api/auth/verify-email/", {
+            "email": "local-guest@example.com", "otp": "123456", "purpose": "guest_checkout",
+        }, format="json")
+        self.assertEqual(verified.status_code, 201)
+
     def register(self, email="new-user@example.com"):
         return self.client.post(
             "/api/auth/register/",
@@ -226,6 +241,53 @@ class AuthenticationEmailFlowTests(APITestCase):
         user = get_user_model().objects.get(email="guest@example.com")
         self.assertTrue(user.is_email_verified)
         self.assertFalse(user.has_usable_password())
+        self.assertFalse(user.is_registered)
+
+        signup = self.register("guest@example.com")
+        self.assertEqual(signup.status_code, status.HTTP_201_CREATED)
+        self.assertFalse(get_user_model().objects.get(pk=user.pk).is_registered)
+        registration_code = mail.outbox[-1].body.split("code is ")[1][:6]
+        confirmed = self.client.post("/api/auth/verify-email/", {
+            "email": user.email, "otp": registration_code, "purpose": "registration",
+        }, format="json")
+        self.assertEqual(confirmed.status_code, status.HTTP_200_OK)
+        user.refresh_from_db()
+        self.assertTrue(user.is_registered)
+        self.assertTrue(user.check_password("StrongPassword123!"))
+
+    @patch("accounts.models.EmailOTP.generate_otp", return_value="123456")
+    def test_registered_customer_can_use_guest_otp_without_organizer_access(self, _generate):
+        user = get_user_model().objects.create_user(
+            email="returning@example.com", password="StrongPassword123!", is_email_verified=True,
+        )
+        sent = self.client.post("/api/auth/email-verification/", {
+            "email": user.email, "purpose": "guest_checkout",
+        }, format="json")
+        self.assertEqual(sent.status_code, 200)
+        verified = self.client.post("/api/auth/verify-email/", {
+            "email": user.email, "otp": "123456", "purpose": "guest_checkout",
+        }, format="json")
+        self.assertEqual(verified.status_code, 201)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {verified.data['access']}")
+        self.assertEqual(self.client.get("/api/auth/user/profile/").status_code, 200)
+        self.assertEqual(self.client.post("/api/auth/organizer/activate/").status_code, 403)
+        user.refresh_from_db()
+        self.assertTrue(user.check_password("StrongPassword123!"))
+        self.assertFalse(user.is_organizer)
+
+    @patch("accounts.models.EmailOTP.generate_otp", return_value="234567")
+    def test_ticket_email_access_code_only_grants_read_access(self, _generate):
+        user = get_user_model().objects.create_user(email="tickets@example.com", password="StrongPassword123!")
+        self.client.post("/api/auth/email-verification/", {
+            "email": user.email, "purpose": "ticket_access",
+        }, format="json")
+        verified = self.client.post("/api/auth/verify-email/", {
+            "email": user.email, "otp": "234567", "purpose": "ticket_access",
+        }, format="json")
+        self.assertEqual(verified.status_code, 201)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {verified.data['access']}")
+        self.assertEqual(self.client.get("/api/orders/my-tickets/").status_code, 200)
+        self.assertEqual(self.client.post("/api/orders/", {}).status_code, 403)
 
     def test_invalid_otp_purpose_is_rejected_without_sending(self):
         response = self.client.post(
