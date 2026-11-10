@@ -22,6 +22,7 @@ SECRET_KEY = os.getenv("SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv("DEBUG") == "True"
+LOCAL_PRINT_OTP = DEBUG and os.getenv("LOCAL_PRINT_OTP", "False").lower() == "true"
 
 # Production defaults; TLS-terminating proxies must strip and set this header
 # before TRUST_PROXY_SSL_HEADER is enabled.

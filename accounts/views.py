@@ -73,7 +73,7 @@ class RegisterView(generics.CreateAPIView):
                 {"message": "Check your email for the next steps to continue."},
                 status=status.HTTP_201_CREATED,
             )
-        except (SMTPException, OSError):
+        except (SMTPException, OSError, RequestException, ImproperlyConfigured):
             return Response(
                 {"detail": "Verification email could not be sent. Please try again."},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -277,7 +277,7 @@ class EmailVerificationRequestView(APIView):
 
         try:
             serializer.is_valid(raise_exception=True)
-        except (SMTPException, OSError):
+        except (SMTPException, OSError, RequestException, ImproperlyConfigured):
             return Response(
                 {"detail": "Verification email could not be sent. Please try again."},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,

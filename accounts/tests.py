@@ -255,6 +255,18 @@ class AuthenticationEmailFlowTests(APITestCase):
         self.assertTrue(user.is_registered)
         self.assertTrue(user.check_password("StrongPassword123!"))
 
+    @patch("accounts.serializers.send_email", side_effect=HTTPError("Brevo rejected request"))
+    def test_guest_otp_email_failure_returns_json_and_does_not_store_code(self, _send):
+        response = self.client.post(
+            "/api/auth/email-verification/",
+            {"email": "failed-guest@example.com", "purpose": "guest_checkout"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+        self.assertEqual(response["Content-Type"], "application/json")
+        self.assertIn("detail", response.data)
+        self.assertFalse(EmailOTP.objects.filter(email="failed-guest@example.com").exists())
+
     @patch("accounts.models.EmailOTP.generate_otp", return_value="123456")
     def test_registered_customer_can_use_guest_otp_without_organizer_access(self, _generate):
         user = get_user_model().objects.create_user(
